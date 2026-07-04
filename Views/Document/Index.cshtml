@@ -1,0 +1,39 @@
+@model BelegOCR.Models.DocumentListViewModel
+@{ ViewData["Title"] = "Belege"; }
+
+<div style="display:flex; justify-content:space-between; align-items:center">
+    <h1>Belege</h1>
+    <a href="/Document/Upload" class="btn btn-primary">+ Beleg hochladen</a>
+</div>
+
+<table class="table mt-3">
+    <thead>
+        <tr>
+            <th>Dateiname</th>
+            <th>Template</th>
+            <th>Status</th>
+            <th>Verarbeitet</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var d in Model.Documents)
+    {
+        var tpl = Model.Templates.FirstOrDefault(t => t.Id == d.TemplateId);
+        <tr>
+            <td>@d.OriginalFileName</td>
+            <td>@(tpl?.Name ?? "–")</td>
+            <td>
+                <span class="badge badge-@(d.Status == "Processed" ? "success" : d.Status == "Error" ? "danger" : "warning")">
+                    @d.Status
+                </span>
+            </td>
+            <td>@(d.ProcessedAt?.ToLocalTime().ToString("dd.MM.yyyy HH:mm") ?? "–")</td>
+            <td>
+                <a href="/Document/Compare/@d.Id" class="btn btn-sm btn-secondary">Vergleich</a>
+                <a href="/Document/Details/@d.Id"  class="btn btn-sm btn-secondary">Details</a>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>

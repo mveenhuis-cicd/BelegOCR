@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>@ViewData["Title"] – BelegOCR</title>
+    <link rel="stylesheet" href="~/css/site.css"/>
+</head>
+<body>
+<nav class="navbar">
+    <a class="navbar-brand" href="/">📄 BelegOCR</a>
+    <div class="nav-links">
+        <a href="/Document">Belege</a>
+        <a href="/Document/Upload">Hochladen</a>
+        <a href="/Template">Templates</a>
+        <a href="/Template/Create">+ Neues Template</a>
+    </div>
+</nav>
+<main class="container">
+    @RenderBody()
+</main>
+@RenderSection("Scripts", required: false)
+</body>
+</html>

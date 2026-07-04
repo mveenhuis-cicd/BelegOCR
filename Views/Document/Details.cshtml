@@ -1,0 +1,60 @@
+@model BelegOCR.Models.Document
+@{ ViewData["Title"] = "Details: " + Model.OriginalFileName; }
+
+<h2>@Model.OriginalFileName</h2>
+
+<dl class="dl-info">
+    <dt>Status</dt>      <dd><span class="badge badge-@(Model.Status=="Processed"?"success":"warning")">@Model.Status</span></dd>
+    <dt>Template</dt>    <dd>@(ViewBag.Template?.Name ?? "–")</dd>
+    <dt>Hochgeladen</dt> <dd>@Model.CreatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</dd>
+    <dt>Verarbeitet</dt> <dd>@(Model.ProcessedAt?.ToLocalTime().ToString("dd.MM.yyyy HH:mm") ?? "–")</dd>
+</dl>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+    <div class="alert alert-danger">@Model.ErrorMessage</div>
+}
+
+<h4 class="mt-3">Extrahierte Felder (JSON-Inhalt)</h4>
+
+@if (string.IsNullOrEmpty(Model.ExtractedJson))
+{
+    <p class="text-muted">Keine Daten vorhanden.</p>
+}
+else
+{
+    <!-- Rohdaten hübsch formatiert -->
+    var doc = System.Text.Json.JsonDocument.Parse(Model.ExtractedJson);
+    <table class="table">
+        <thead><tr><th>Schlüssel</th><th>Wert</th><th>Konfidenz</th></tr></thead>
+        <tbody>
+        @foreach (var prop in doc.RootElement.EnumerateObject())
+        {
+            string val  = "", conf = "–";
+            if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                prop.Value.TryGetProperty("value",      out var vEl); val  = vEl.GetString() ?? "";
+                prop.Value.TryGetProperty("confidence", out var cEl); conf = cEl.ValueKind != System.Text.Json.JsonValueKind.Undefined
+                                                                             ? cEl.GetDouble().ToString("F1") + " %" : "–";
+            }
+            else { val = prop.Value.GetString() ?? prop.Value.ToString(); }
+
+            <tr>
+                <td><code>@prop.Name</code></td>
+                <td>@val</td>
+                <td>@conf</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+
+    <details>
+        <summary>JSON-Rohdaten</summary>
+        <pre>@System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions{WriteIndented=true})</pre>
+    </details>
+}
+
+<div class="mt-3">
+    <a href="/Document/Compare/@Model.Id" class="btn btn-secondary">← Vergleichsansicht</a>
+    <a href="/Document"                   class="btn btn-secondary">Zur Übersicht</a>
+</div>

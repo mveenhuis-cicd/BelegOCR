@@ -1,0 +1,100 @@
+@model BelegOCR.Models.DocumentCompareViewModel
+@{ ViewData["Title"] = "Vergleich: " + Model.Document.OriginalFileName; }
+
+<h2>Vergleich: <strong>@Model.Document.OriginalFileName</strong></h2>
+
+@if (Model.Template != null)
+{
+    <p class="text-muted">Template: <strong>@Model.Template.Name</strong></p>
+}
+
+<!-- Extrahierte Werte -->
+@if (Model.Document.ExtractedValues.Count > 0)
+{
+    <div class="extracted-values">
+        <h4>Extrahierte Werte</h4>
+        <table class="table table-sm">
+            <thead><tr><th>Feld</th><th>Wert</th><th>Konfidenz</th></tr></thead>
+            <tbody>
+            @foreach (var kv in Model.Document.ExtractedValues)
+            {
+                var field = Model.Document.ExtractedValues.GetField(kv.Key);
+                <tr>
+                    <td><strong>@(field?.FieldName ?? kv.Key)</strong></td>
+                    <td>@field?.Value</td>
+                    <td>@(field != null ? field.Confidence.ToString("F1") + " %" : "–")</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+else
+{
+    <div class="alert alert-warning">
+        Noch keine Daten extrahiert.
+        @if (Model.Template == null)
+        {
+            <text> Bitte ein Template zuweisen und verarbeiten.</text>
+        }
+    </div>
+}
+
+<!-- Bildvergleich: Original | Annotiert -->
+<div class="compare-grid">
+    <div>
+        <h5>Original</h5>
+        <img src="@Model.OriginalImageUrl" class="compare-img" id="imgOriginal"/>
+    </div>
+    <div>
+        <h5>Template-Overlay</h5>
+        <div class="compare-img-wrap">
+            <img src="@Model.OriginalImageUrl" class="compare-img" id="imgBase"/>
+            <canvas id="overlayCanvas" class="overlay-canvas"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Nachträgliche Verarbeitung -->
+@if (Model.Template != null && Model.Document.Status != "Processed")
+{
+    <form method="post" action="/Document/Process/@Model.Document.Id" class="mt-3">
+        @Html.AntiForgeryToken()
+        <input type="hidden" name="templateId" value="@Model.Template.Id"/>
+        <button type="submit" class="btn btn-primary">▶ Jetzt verarbeiten</button>
+    </form>
+}
+
+@section Scripts {
+<script>
+// Felder vom Server
+const fields = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.Fields));
+
+const imgBase = document.getElementById('imgBase');
+const canvas  = document.getElementById('overlayCanvas');
+const ctx     = canvas.getContext('2d');
+
+function drawOverlay() {
+    canvas.width  = imgBase.offsetWidth;
+    canvas.height = imgBase.offsetHeight;
+    const sx = canvas.width  / (imgBase.naturalWidth  || canvas.width);
+    const sy = canvas.height / (imgBase.naturalHeight || canvas.height);
+
+    fields.forEach(f => {
+        const x = f.X * sx, y = f.Y * sy, w = f.W * sx, h = f.H * sy;
+        ctx.fillStyle   = 'rgba(0,120,212,0.18)';
+        ctx.strokeStyle = '#0078d4';
+        ctx.lineWidth   = 2;
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
+        ctx.fillStyle = '#0078d4';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText(f.FieldName, x + 3, y + 13);
+    });
+}
+
+imgBase.onload = drawOverlay;
+window.addEventListener('resize', drawOverlay);
+if (imgBase.complete) drawOverlay();
+</script>
+}

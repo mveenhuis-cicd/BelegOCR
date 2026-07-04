@@ -1,0 +1,26 @@
+@model BelegOCR.Models.DocumentTemplate
+@{ ViewData["Title"] = "Neues Template"; }
+
+<h1>Neues Template anlegen</h1>
+
+<form method="post" enctype="multipart/form-data" style="max-width:600px">
+    @Html.AntiForgeryToken()
+
+    <div class="form-group">
+        <label>Name des Templates</label>
+        <input name="Name" class="form-control" placeholder="z.B. Eingangsrechnung DIN A4" required/>
+    </div>
+
+    <div class="form-group mt-2">
+        <label>Beschreibung (optional)</label>
+        <input name="Description" class="form-control" placeholder="Kurze Beschreibung"/>
+    </div>
+
+    <div class="form-group mt-2">
+        <label>Beispielbild des Belegs (PNG / JPG / TIFF)</label>
+        <input type="file" name="sampleImage" class="form-control" accept="image/*" required/>
+        <small class="text-muted">Dieses Bild dient als Vorlage für den Canvas-Editor.</small>
+    </div>
+
+    <button type="submit" class="btn btn-primary mt-3">Weiter zum Editor →</button>
+</form>

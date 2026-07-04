@@ -1,0 +1,445 @@
+@model BelegOCR.Models.TemplateEditorViewModel
+@{ ViewData["Title"] = "Template bearbeiten: " + Model.Template.Name; }
+
+<h2>Template: <strong>@Model.Template.Name</strong></h2>
+
+<div class="editor-layout">
+
+    <!-- Linke Seite: Canvas -->
+    <div class="canvas-panel">
+        <div class="mode-switch">
+            <button id="modeFields"  class="btn btn-sm btn-mode active">📋 Werte-Felder</button>
+            <button id="modeAnchors" class="btn btn-sm btn-mode">⚓ Ankerpunkte</button>
+        </div>
+        <p class="hint" id="modeHint">
+            Ziehe ein Rechteck über den gewünschten Bereich. Danach öffnet sich ein Dialog zur Benennung.
+        </p>
+        <div class="canvas-wrap" style="width:@(Model.ImageWidth)px; max-width:100%">
+            <img id="bgImg" src="@Model.ImageUrl"
+                 style="width:100%; display:block; user-select:none; pointer-events:none"/>
+            <canvas id="templateCanvas"></canvas>
+        </div>
+    </div>
+
+    <!-- Rechte Seite: Feldliste -->
+    <div class="fields-panel">
+        <div id="fieldsView">
+            <h4>Definierte Felder</h4>
+            <ul id="fieldList" class="field-list"></ul>
+        </div>
+        <div id="anchorsView" style="display:none">
+            <h4>Ankerpunkte</h4>
+            <p class="text-muted" style="font-size:12px">
+                Zwei feste Textstellen (oben-links, unten-rechts), die auf jedem
+                Beleg dieser Vorlage gleich lauten. Werden genutzt, um Verschiebung
+                und Skalierung des hochgeladenen Belegs gegenüber dem Template
+                automatisch zu korrigieren.
+            </p>
+            <div class="anchor-slot" id="anchorSlotTopLeft">
+                <strong>↖ Oben-Links</strong>
+                <div class="anchor-slot-content">Noch nicht markiert</div>
+            </div>
+            <div class="anchor-slot" id="anchorSlotBottomRight">
+                <strong>↘ Unten-Rechts</strong>
+                <div class="anchor-slot-content">Noch nicht markiert</div>
+            </div>
+        </div>
+
+        <hr/>
+        <button id="btnSave" class="btn btn-primary w-100">💾 Template speichern</button>
+        <div id="saveMsg" class="alert alert-success mt-2" style="display:none">Gespeichert!</div>
+    </div>
+</div>
+
+<!-- Feld-Dialog -->
+<div id="fieldDialog" class="modal-overlay" style="display:none">
+    <div class="modal-box">
+        <h4>Feld benennen</h4>
+        <div class="form-group">
+            <label>Anzeigename</label>
+            <input id="dlgFieldName" class="form-control" placeholder="z.B. Rechnungsnummer"/>
+        </div>
+        <div class="form-group mt-2">
+            <label>Schlüssel (für Datenbank)</label>
+            <input id="dlgFieldKey" class="form-control" placeholder="z.B. invoice_no"/>
+        </div>
+        <div class="form-group mt-2">
+            <label>Typ</label>
+            <select id="dlgFieldType" class="form-control">
+                <option value="Text">Text</option>
+                <option value="Number">Zahl</option>
+                <option value="Date">Datum</option>
+            </select>
+        </div>
+        <div class="form-group mt-2">
+            <label>Validierungsmuster (optional)</label>
+            <input id="dlgValidationPattern" class="form-control" placeholder="z.B. ^RE-\d{4}-\d{4}$"/>
+            <small class="text-muted">
+                Regex-Muster zur Plausibilitätsprüfung. Warnt z.B. wenn statt
+                "RE-2024-0578" versehentlich die Beschriftung "Rechnungsnummer:"
+                erkannt wurde. Leer lassen = keine Prüfung.
+                <a href="#" id="patternExamplesToggle">Beispiele anzeigen</a>
+            </small>
+            <div id="patternExamples" class="pattern-examples" style="display:none">
+                <table class="table table-sm">
+                    <tbody>
+                        <tr><td><code>^RE-\d{4}-\d{4}$</code></td><td>Rechnungsnummer wie RE-2024-0578</td></tr>
+                        <tr><td><code>^KUN-\d{5}$</code></td><td>Kundennummer wie KUN-10023</td></tr>
+                        <tr><td><code>^\d{2}\.\d{2}\.\d{4}$</code></td><td>Datum wie 15.05.2024</td></tr>
+                        <tr><td><code>^DE\d{2}[\d ]{18,22}$</code></td><td>IBAN (deutsch)</td></tr>
+                        <tr><td><code>^\d+([.,]\d{2})?\s*€?$</code></td><td>Geldbetrag wie 2.534,70 €</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="mt-3" style="display:flex; gap:8px">
+            <button id="dlgOk"     class="btn btn-primary">Hinzufügen</button>
+            <button id="dlgCancel" class="btn btn-secondary">Abbrechen</button>
+        </div>
+    </div>
+</div>
+
+<!-- Anker-Dialog -->
+<div id="anchorDialog" class="modal-overlay" style="display:none">
+    <div class="modal-box">
+        <h4 id="anchorDialogTitle">Ankerpunkt markieren</h4>
+        <p class="text-muted" style="font-size:13px">
+            Trage exakt den Text ein, der in diesem Bereich auf <strong>jedem</strong>
+            Beleg dieser Vorlage gleich steht (z.B. Firmenname, feste Fußzeile).
+        </p>
+        <div class="form-group">
+            <label>Erwarteter Text</label>
+            <input id="dlgAnchorText" class="form-control" placeholder="z.B. TechSolutions GmbH"/>
+        </div>
+        <div class="mt-3" style="display:flex; gap:8px">
+            <button id="dlgAnchorOk"     class="btn btn-primary">Übernehmen</button>
+            <button id="dlgAnchorCancel" class="btn btn-secondary">Abbrechen</button>
+        </div>
+    </div>
+</div>
+
+
+@section Scripts {
+<script>
+// ── Daten aus Server ─────────────────────────────────────────────────────────
+const TEMPLATE_ID  = @Model.Template.Id;
+const IMG_W        = @Model.ImageWidth;
+const IMG_H        = @Model.ImageHeight;
+let   existingFields = @Html.Raw(Model.Template.FieldsJson);   // bereits gespeicherte Felder
+let   anchors         = @Html.Raw(Model.Template.AnchorsJson);  // { TopLeft, BottomRight }
+
+// ── Modus: "fields" oder "anchors" ───────────────────────────────────────────
+let mode = 'fields';
+let pendingAnchorRole = null; // 'TopLeft' | 'BottomRight' während Anker gerade gezeichnet wird
+
+const modeFieldsBtn  = document.getElementById('modeFields');
+const modeAnchorsBtn = document.getElementById('modeAnchors');
+const fieldsView     = document.getElementById('fieldsView');
+const anchorsView    = document.getElementById('anchorsView');
+const modeHint       = document.getElementById('modeHint');
+
+function setMode(newMode) {
+    mode = newMode;
+    modeFieldsBtn.classList.toggle('active', mode === 'fields');
+    modeAnchorsBtn.classList.toggle('active', mode === 'anchors');
+    fieldsView.style.display  = mode === 'fields'  ? 'block' : 'none';
+    anchorsView.style.display = mode === 'anchors' ? 'block' : 'none';
+    modeHint.textContent = mode === 'fields'
+        ? 'Ziehe ein Rechteck über den gewünschten Bereich. Danach öffnet sich ein Dialog zur Benennung.'
+        : 'Ziehe ein Rechteck über einen festen Text oben-links, dann einen weiteren unten-rechts im Beleg.';
+    redraw();
+}
+
+modeFieldsBtn.addEventListener('click', () => setMode('fields'));
+modeAnchorsBtn.addEventListener('click', () => setMode('anchors'));
+
+document.getElementById('patternExamplesToggle').addEventListener('click', (e) => {
+    e.preventDefault();
+    const box = document.getElementById('patternExamples');
+    box.style.display = box.style.display === 'none' ? 'block' : 'none';
+});
+
+// ── Canvas Setup ─────────────────────────────────────────────────────────────
+const img    = document.getElementById('bgImg');
+const canvas = document.getElementById('templateCanvas');
+const ctx    = canvas.getContext('2d');
+
+function resizeCanvas() {
+    canvas.width  = img.offsetWidth;
+    canvas.height = img.offsetHeight;
+    scaleX = canvas.width  / IMG_W;
+    scaleY = canvas.height / IMG_H;
+    redraw();
+}
+
+let scaleX = 1, scaleY = 1;
+img.onload = resizeCanvas;
+window.addEventListener('resize', resizeCanvas);
+if (img.complete) resizeCanvas();
+
+// ── Zeichnen ─────────────────────────────────────────────────────────────────
+function redraw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (mode === 'fields') {
+        existingFields.forEach((f, i) => drawField(f, i));
+    } else {
+        if (anchors.TopLeft)     drawAnchor(anchors.TopLeft,     '↖ Oben-Links');
+        if (anchors.BottomRight) drawAnchor(anchors.BottomRight, '↘ Unten-Rechts');
+    }
+
+    if (drawing && rect.w && rect.h) {
+        const color = mode === 'fields' ? '#0078d4' : '#8764b8';
+        drawRect(rect, color, mode === 'fields' ? 'rgba(0,120,212,0.15)' : 'rgba(135,100,184,0.15)');
+    }
+}
+
+function drawAnchor(a, label) {
+    const x = a.X * scaleX, y = a.Y * scaleY,
+          w = a.W * scaleX, h = a.H * scaleY;
+    ctx.fillStyle = 'rgba(135,100,184,0.18)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#8764b8';
+    ctx.lineWidth   = 2;
+    ctx.setLineDash([5, 3]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = '#8764b8';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(label, x + 3, y + 13);
+}
+
+function drawField(f, idx) {
+    const x = f.X * scaleX, y = f.Y * scaleY,
+          w = f.W * scaleX, h = f.H * scaleY;
+    ctx.fillStyle = 'rgba(0,180,100,0.15)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#00a86b';
+    ctx.lineWidth   = 2;
+    ctx.strokeRect(x, y, w, h);
+
+    // Label
+    ctx.fillStyle = '#00a86b';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(f.FieldName, x + 3, y + 13);
+
+    // Löschen-Button (×)
+    ctx.fillStyle = '#d32f2f';
+    ctx.fillRect(x + w - 16, y, 16, 16);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('×', x + w - 12, y + 12);
+}
+
+function drawRect(r, stroke, fill) {
+    ctx.fillStyle   = fill;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth   = 2;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+}
+
+// ── Maus-Interaktion ─────────────────────────────────────────────────────────
+let drawing = false, startX = 0, startY = 0;
+let rect    = { x:0, y:0, w:0, h:0 };
+let pendingRect = null;
+
+canvas.addEventListener('mousedown', e => {
+    const p  = pos(e);
+
+    if (mode === 'fields') {
+        // Klick auf Löschen-Button?
+        const del = existingFields.findIndex(f => {
+            const x = f.X*scaleX, y = f.Y*scaleY, w = f.W*scaleX, h = f.H*scaleY;
+            return e.offsetX >= x+w-16 && e.offsetX <= x+w &&
+                   e.offsetY >= y       && e.offsetY <= y+16;
+        });
+        if (del >= 0) { existingFields.splice(del, 1); renderList(); redraw(); return; }
+    }
+
+    drawing = true;
+    startX  = p.x; startY = p.y;
+    rect    = { x: p.x, y: p.y, w: 0, h: 0 };
+});
+
+canvas.addEventListener('mousemove', e => {
+    if (!drawing) return;
+    const p = pos(e);
+    rect.w  = p.x - startX;
+    rect.h  = p.y - startY;
+    redraw();
+});
+
+canvas.addEventListener('mouseup', e => {
+    if (!drawing) return;
+    drawing = false;
+    if (Math.abs(rect.w) < 10 || Math.abs(rect.h) < 10) { redraw(); return; }
+
+    // Normalisieren (negative Werte erlaubt wenn rückwärts gezogen)
+    pendingRect = {
+        x: Math.round((rect.w < 0 ? rect.x + rect.w : rect.x) / scaleX),
+        y: Math.round((rect.h < 0 ? rect.y + rect.h : rect.y) / scaleY),
+        w: Math.round(Math.abs(rect.w) / scaleX),
+        h: Math.round(Math.abs(rect.h) / scaleY)
+    };
+
+    if (mode === 'fields') {
+        openDialog();
+    } else {
+        openAnchorDialog();
+    }
+});
+
+function pos(e) { return { x: e.offsetX, y: e.offsetY }; }
+
+// ── Dialog ───────────────────────────────────────────────────────────────────
+const dialog = document.getElementById('fieldDialog');
+
+function openDialog() {
+    document.getElementById('dlgFieldName').value = '';
+    document.getElementById('dlgFieldKey').value  = '';
+    document.getElementById('dlgFieldType').value = 'Text';
+    document.getElementById('dlgValidationPattern').value = '';
+    dialog.style.display = 'flex';
+    document.getElementById('dlgFieldName').focus();
+}
+
+document.getElementById('dlgOk').addEventListener('click', () => {
+    const name    = document.getElementById('dlgFieldName').value.trim();
+    const key     = document.getElementById('dlgFieldKey').value.trim()
+                        .replace(/\s+/g, '_').toLowerCase();
+    const type    = document.getElementById('dlgFieldType').value;
+    const pattern = document.getElementById('dlgValidationPattern').value.trim();
+
+    if (!name || !key) { alert('Bitte Name und Schlüssel eingeben.'); return; }
+
+    // Clientseitige Vorab-Prüfung: ungültiges Regex sofort melden, statt erst
+    // beim nächsten Verarbeitungslauf serverseitig stillschweigend zu ignorieren.
+    if (pattern) {
+        try { new RegExp(pattern); }
+        catch (ex) {
+            alert('Das Validierungsmuster ist kein gültiger regulärer Ausdruck:\n' + ex.message);
+            return;
+        }
+    }
+
+    existingFields.push({
+        FieldName: name,
+        FieldKey: key,
+        Type: type,
+        ValidationPattern: pattern || null,
+        ...pendingRect
+    });
+    dialog.style.display = 'none';
+    renderList();
+    redraw();
+});
+
+document.getElementById('dlgCancel').addEventListener('click', () => {
+    dialog.style.display = 'none';
+    redraw();
+});
+
+// ── Anker-Dialog ─────────────────────────────────────────────────────────────
+const anchorDialog = document.getElementById('anchorDialog');
+
+function openAnchorDialog() {
+    // Position der gezogenen Box als Hinweis nutzen: liegt sie eher in der
+    // oberen linken oder unteren rechten Bildhälfte? Reine Vorauswahl, der
+    // Titel macht die tatsächliche Zuordnung für den User eindeutig.
+    const isTopLeftArea = (pendingRect.x / IMG_W < 0.5) && (pendingRect.y / IMG_H < 0.5);
+    pendingAnchorRole = isTopLeftArea ? 'TopLeft' : 'BottomRight';
+
+    document.getElementById('anchorDialogTitle').textContent =
+        pendingAnchorRole === 'TopLeft' ? 'Anker: Oben-Links' : 'Anker: Unten-Rechts';
+    document.getElementById('dlgAnchorText').value = anchors[pendingAnchorRole]?.ExpectedText ?? '';
+    anchorDialog.style.display = 'flex';
+    document.getElementById('dlgAnchorText').focus();
+}
+
+document.getElementById('dlgAnchorOk').addEventListener('click', () => {
+    const text = document.getElementById('dlgAnchorText').value.trim();
+    if (!text) { alert('Bitte den erwarteten Text eingeben.'); return; }
+
+    anchors[pendingAnchorRole] = { ExpectedText: text, ...pendingRect };
+    anchorDialog.style.display = 'none';
+    renderAnchorPanel();
+    redraw();
+});
+
+document.getElementById('dlgAnchorCancel').addEventListener('click', () => {
+    anchorDialog.style.display = 'none';
+    redraw();
+});
+
+function renderAnchorPanel() {
+    renderAnchorSlot('anchorSlotTopLeft',     anchors.TopLeft,     'TopLeft');
+    renderAnchorSlot('anchorSlotBottomRight', anchors.BottomRight, 'BottomRight');
+}
+
+function renderAnchorSlot(elementId, anchor, role) {
+    const content = document.querySelector(`#${elementId} .anchor-slot-content`);
+    if (!anchor) {
+        content.innerHTML = '<span class="text-muted">Noch nicht markiert</span>';
+        return;
+    }
+    content.innerHTML = `
+        <code>${escapeHtml(anchor.ExpectedText)}</code>
+        <small>(${anchor.X},${anchor.Y} ${anchor.W}×${anchor.H})</small>
+        <button onclick="removeAnchor('${role}')" class="btn-icon">×</button>`;
+}
+
+function removeAnchor(role) {
+    anchors[role] = null;
+    renderAnchorPanel();
+    redraw();
+}
+
+renderAnchorPanel();
+
+// ── Feldliste ────────────────────────────────────────────────────────────────
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
+}
+
+function renderList() {
+    const ul = document.getElementById('fieldList');
+    ul.innerHTML = existingFields.map((f, i) => `
+        <li class="field-item">
+            <span class="field-badge">${escapeHtml(f.Type)}</span>
+            <strong>${escapeHtml(f.FieldName)}</strong>
+            <code>${escapeHtml(f.FieldKey)}</code>
+            <small>(${f.X},${f.Y} ${f.W}×${f.H})</small>
+            ${f.ValidationPattern ? `<small class="pattern-tag" title="Validierungsmuster">🔍 ${escapeHtml(f.ValidationPattern)}</small>` : ''}
+            <button onclick="removeField(${i})" class="btn-icon">×</button>
+        </li>`).join('');
+}
+
+function removeField(i) {
+    existingFields.splice(i, 1);
+    renderList();
+    redraw();
+}
+
+renderList();
+
+// ── Speichern ────────────────────────────────────────────────────────────────
+document.getElementById('btnSave').addEventListener('click', async () => {
+    const res = await fetch('/Template/SaveFields', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ templateId: TEMPLATE_ID, fields: existingFields, anchors: anchors })
+    });
+    if (res.ok) {
+        const msg = document.getElementById('saveMsg');
+        msg.style.display = 'block';
+        setTimeout(() => msg.style.display = 'none', 3000);
+    } else {
+        alert('Fehler beim Speichern.');
+    }
+});
+</script>
+}
