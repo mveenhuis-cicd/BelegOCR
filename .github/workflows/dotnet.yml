@@ -25,4 +25,4 @@ jobs:
     - name: Build
       run: dotnet build ./BelegOCR.sln --no-restore 
     - name: Test
-      run: dotnet test ./BelegOCR.sln --no-build --verbosity normal
+      run: dotnet test ./BelegOCR.Tests.csproj --no-build --verbosity normal
