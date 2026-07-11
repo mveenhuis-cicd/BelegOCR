@@ -31,6 +31,6 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./BelegOCR/BelegOCR/Dockerfile
+          file: ./Dockerfile
           push: true
           tags: ghcr.io/mveenhuis-cicd/belegocr:dev
