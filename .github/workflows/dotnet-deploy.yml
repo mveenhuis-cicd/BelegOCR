@@ -34,6 +34,7 @@ jobs:
 
           echo "Using IMAGE_DEV=${REPO_LC}:Dev"
           echo "Using IMAGE_TEST=${REPO_LC}:Test"
+          echo "Test"
 
       - name: Promote Dev to Test
         shell: bash
