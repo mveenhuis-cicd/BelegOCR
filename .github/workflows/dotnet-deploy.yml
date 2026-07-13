@@ -1,0 +1,42 @@
+name: cd-test
+
+on:
+  workflow_run:
+    workflows: ["ci-selfhostedUbuntu"]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  promote_dev_to_test:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Login to GHCR
+        shell: bash
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" |
+          docker login ghcr.io \
+            -u "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Set image names
+        shell: bash
+        run: |
+          REPO_LC="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "IMAGE_DEV=${REPO_LC}:dev" >> "$GITHUB_ENV"
+          echo "IMAGE_TEST=${REPO_LC}:test" >> "$GITHUB_ENV"
+
+          echo "Using IMAGE_DEV=${REPO_LC}:dev"
+          echo "Using IMAGE_TEST=${REPO_LC}:test"
+
+      - name: Promote dev to test
+        shell: bash
+        run: |
+          docker pull "$IMAGE_DEV"
+          docker tag "$IMAGE_DEV" "$IMAGE_TEST"
+          docker push "$IMAGE_TEST"
