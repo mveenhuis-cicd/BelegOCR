@@ -28,13 +28,13 @@ jobs:
         shell: bash
         run: |
           REPO_LC="ghcr.io/${GITHUB_REPOSITORY,,}"
-          echo "IMAGE_DEV=${REPO_LC}:dev" >> "$GITHUB_ENV"
-          echo "IMAGE_TEST=${REPO_LC}:test" >> "$GITHUB_ENV"
+          echo "IMAGE_DEV=${REPO_LC}:Dev" >> "$GITHUB_ENV"
+          echo "IMAGE_TEST=${REPO_LC}:Test" >> "$GITHUB_ENV"
 
-          echo "Using IMAGE_DEV=${REPO_LC}:dev"
-          echo "Using IMAGE_TEST=${REPO_LC}:test"
+          echo "Using IMAGE_DEV=${REPO_LC}:Dev"
+          echo "Using IMAGE_TEST=${REPO_LC}:Test"
 
-      - name: Promote dev to test
+      - name: Promote Dev to Test
         shell: bash
         run: |
           docker pull "$IMAGE_DEV"
