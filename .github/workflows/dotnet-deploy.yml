@@ -3,7 +3,7 @@ name: cd-test
 on:
   workflow_dispatch:
   workflow_run:
-    workflows: [".NET"]
+    workflows: ["Docker Build"]
     types: [completed]
 
 permissions:
