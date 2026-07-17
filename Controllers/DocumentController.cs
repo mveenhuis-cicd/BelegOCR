@@ -3,6 +3,7 @@ using BelegOCR.Models;
 using BelegOCR.Repositories;
 using BelegOCR.Services;
 using System.Text.Json;
+using BelegOCR.Services.Interfaces;
 
 namespace BelegOCR.Controllers;
 
