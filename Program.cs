@@ -1,5 +1,6 @@
 using BelegOCR.Repositories;
 using BelegOCR.Services;
+using BelegOCR.Services.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
