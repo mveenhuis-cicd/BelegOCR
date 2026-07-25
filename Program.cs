@@ -1,4 +1,4 @@
-using BelegOCR.Repositories;
+using BelegOCR.RepositoriesSqlLite;
 using BelegOCR.Services;
 using BelegOCR.Services.Interfaces;
 

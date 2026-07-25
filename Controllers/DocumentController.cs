@@ -1,9 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using BelegOCR.Models;
-using BelegOCR.Repositories;
-using BelegOCR.Services;
-using System.Text.Json;
 using BelegOCR.Services.Interfaces;
+using BelegOCR.RepositoriesSqlLite;
 
 namespace BelegOCR.Controllers;
 

@@ -1,7 +1,6 @@
-using Microsoft.AspNetCore.Mvc;
 using BelegOCR.Models;
-using BelegOCR.Repositories;
-using SixLabors.ImageSharp;
+using BelegOCR.RepositoriesSqlLite;
+using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 
 namespace BelegOCR.Controllers;
