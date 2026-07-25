@@ -6,8 +6,9 @@ using BelegOCR.RepositoriesSqlLite;
 namespace BelegOCR.Controllers;
 
 public class DocumentController(
-    IDocumentRepository  documentRepo,
-    ITemplateRepository  templateRepo,
+   
+    ITemplateService templateService,
+    IDocumentService documentService,
     IOcrService          ocrService,
     IWebHostEnvironment  env,
     ILogger<DocumentController> logger) : Controller
@@ -17,8 +18,8 @@ public class DocumentController(
     // GET /Document
     public async Task<IActionResult> Index()
     {
-        var docs      = await documentRepo.GetAllAsync();
-        var templates = await templateRepo.GetAllAsync();
+        var docs      = await documentService.GetAllAsync();
+        var templates = await templateService.GetAllAsync();
         return View(new DocumentListViewModel
         {
             Documents = docs.ToList(),
@@ -29,7 +30,7 @@ public class DocumentController(
     // GET /Document/Upload
     public async Task<IActionResult> Upload()
     {
-        var templates = await templateRepo.GetAllAsync();
+        var templates = await templateService.GetAllAsync();
         ViewBag.Templates = templates;
         return View();
     }
@@ -41,7 +42,7 @@ public class DocumentController(
         if (file == null || file.Length == 0)
         {
             ModelState.AddModelError("", "Bitte eine Datei auswählen.");
-            ViewBag.Templates = await templateRepo.GetAllAsync();
+            ViewBag.Templates = await templateService.GetAllAsync();
             return View();
         }
 
@@ -62,7 +63,7 @@ public class DocumentController(
             Status           = "Pending"
         };
 
-        var docId = await documentRepo.CreateAsync(doc);
+        var docId = await documentService.CreateAsync(doc);
 
         // Sofort verarbeiten wenn Template vorhanden
         if (templateId.HasValue)
@@ -77,7 +78,7 @@ public class DocumentController(
     // GET /Document/Compare/5  – Original vs. annotiertes Bild
     public async Task<IActionResult> Compare(int id)
     {
-        var doc = await documentRepo.GetByIdAsync(id);
+        var doc = await documentService.GetByIdAsync(id);
         if (doc == null) return NotFound();
 
         DocumentTemplate? template = null;
@@ -85,7 +86,7 @@ public class DocumentController(
 
         if (doc.TemplateId.HasValue)
         {
-            template = await templateRepo.GetByIdAsync(doc.TemplateId.Value);
+            template = await templateService.GetByIdAsync(doc.TemplateId.Value);
             fields   = template?.Fields ?? [];
         }
 
@@ -116,7 +117,7 @@ public class DocumentController(
     [HttpPost, ValidateAntiForgeryToken]
     public async Task<IActionResult> Process(int id, int templateId)
     {
-        var doc = await documentRepo.GetByIdAsync(id);
+        var doc = await documentService.GetByIdAsync(id);
         if (doc == null) return NotFound();
 
         var filePath = Path.Combine(UploadsPath, doc.FilePath);
@@ -128,11 +129,11 @@ public class DocumentController(
     // GET /Document/Details/5  – Extrahierte Felder als Tabelle
     public async Task<IActionResult> Details(int id)
     {
-        var doc = await documentRepo.GetByIdAsync(id);
+        var doc = await documentService.GetByIdAsync(id);
         if (doc == null) return NotFound();
 
         if (doc.TemplateId.HasValue)
-            ViewBag.Template = await templateRepo.GetByIdAsync(doc.TemplateId.Value);
+            ViewBag.Template = await templateService.GetByIdAsync(doc.TemplateId.Value);
 
         return View(doc);
     }
@@ -143,24 +144,24 @@ public class DocumentController(
     {
         try
         {
-            var template = await templateRepo.GetByIdAsync(templateId);
+            var template = await templateService.GetByIdAsync(templateId);
             if (template == null) return;
 
             var extractedJson = await ocrService.ProcessDocumentAsync(filePath, template.Fields);
-            await documentRepo.SaveExtractedAsync(docId, extractedJson);
+            await documentService.SaveExtractedAsync(docId, extractedJson);
 
             // TemplateId am Dokument setzen
-            var doc = await documentRepo.GetByIdAsync(docId);
+            var doc = await documentService.GetByIdAsync(docId);
             if (doc != null && doc.TemplateId == null)
             {
                 // kleines Update via Status-Methode reicht nicht – direktes SQL über Repo
-                await documentRepo.UpdateStatusAsync(docId, "Processed");
+                await documentService.UpdateStatusAsync(docId, "Processed");
             }
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Fehler beim Verarbeiten von Dokument {Id}", docId);
-            await documentRepo.UpdateStatusAsync(docId, "Error", ex.Message);
+            await documentService.UpdateStatusAsync(docId, "Error", ex.Message);
         }
     }
 }

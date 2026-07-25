@@ -9,6 +9,8 @@ builder.Services.AddControllersWithViews();
 // Dapper Repositories
 builder.Services.AddScoped<ITemplateRepository, TemplateRepository>();
 builder.Services.AddScoped<IDocumentRepository, DocumentRepository>();
+builder.Services.AddScoped<IDocumentService, DocumentService>();
+builder.Services.AddScoped<ITemplateService, TemplateService>();
 
 // Services
 builder.Services.AddScoped<IOcrService, OcrService>();
