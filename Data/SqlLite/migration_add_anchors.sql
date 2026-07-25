@@ -1,0 +1,3 @@
+ALTER TABLE DocumentTemplates
+ADD COLUMN AnchorsJson TEXT NOT NULL
+DEFAULT '{}';
