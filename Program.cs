@@ -1,3 +1,4 @@
+using BelegOCR;
 using BelegOCR.RepositoriesSqlLite;
 using BelegOCR.Services;
 using BelegOCR.Services.Interfaces;
@@ -5,7 +6,7 @@ using BelegOCR.Services.Interfaces;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllersWithViews();
-
+builder.Services.AddSingleton<SqlLiteWriterGate>();
 // Dapper Repositories
 builder.Services.AddScoped<ITemplateRepository, TemplateRepository>();
 builder.Services.AddScoped<IDocumentRepository, DocumentRepository>();

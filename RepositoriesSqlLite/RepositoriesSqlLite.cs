@@ -1,6 +1,7 @@
 using BelegOCR.Models;
 using Dapper;
 using Microsoft.Data.Sqlite;
+using System.Xml;
 
 namespace BelegOCR.RepositoriesSqlLite;
 
@@ -27,8 +28,9 @@ public interface IDocumentRepository
 
 // ── TemplateRepository ───────────────────────────────────────────────────────
 
-public class TemplateRepository(IConfiguration cfg) : ITemplateRepository
+public class TemplateRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWriterGate) : ITemplateRepository
 {
+
     private SqliteConnection ConnSqlLite() =>
         new(cfg.GetConnectionString("SqlLite"));
 
@@ -51,7 +53,9 @@ public class TemplateRepository(IConfiguration cfg) : ITemplateRepository
             new { id });
     }
 
-    public async Task<int> CreateAsync(DocumentTemplate t)
+
+    public Task<int> CreateAsync(DocumentTemplate t) =>
+    sqlLiteWriterGate.WriteAsync<int>(async () =>
     {
         using var db = ConnSqlLite();
 
@@ -69,59 +73,63 @@ public class TemplateRepository(IConfiguration cfg) : ITemplateRepository
                 t.SampleImagePath,
                 t.FieldsJson
             });
-    }
+    });
 
-    public async Task UpdateAsync(DocumentTemplate t)
-    {
-        using var db = ConnSqlLite();
+    public async Task UpdateAsync(DocumentTemplate t) =>
+    await sqlLiteWriterGate.WriteAsync(async () => {
+        {
+            using var db = ConnSqlLite();
 
-        await db.ExecuteAsync("""
+            return await db.ExecuteAsync("""
             UPDATE DocumentTemplates
             SET Name = @Name,
                 Description = @Description,
                 UpdatedAt = datetime('now')
             WHERE Id = @Id
             """,
-            new
-            {
-                t.Name,
-                t.Description,
-                t.Id
-            });
-    }
+                 new
+                 {
+                     t.Name,
+                     t.Description,
+                     t.Id
+                 }
+                 );
+        }
+    });
 
-    public async Task DeleteAsync(int id)
-    {
-        using var db = ConnSqlLite();
 
-        await db.ExecuteAsync(
-            "DELETE FROM DocumentTemplates WHERE Id = @id",
-            new { id });
-    }
+    public Task DeleteAsync(int id) =>
+     sqlLiteWriterGate.WriteAsync<DocumentTemplate>(async () =>
+     {
+         using var db = ConnSqlLite();
+
+         await db.ExecuteAsync(
+             "DELETE FROM DocumentTemplates WHERE Id = @id",
+             new { id });
+     });
 
     // Nur die JSON-Felder-Spalte aktualisieren (nach Canvas-Bearbeitung)
-    public async Task SaveFieldsAsync(int templateId, string fieldsJson)
-    {
-        using var db = ConnSqlLite();
+    public Task SaveFieldsAsync(int templateId, string fieldsJson) =>
+        sqlLiteWriterGate.WriteAsync<DocumentTemplate>(async () =>
+        {
+            using var db = ConnSqlLite();
 
-        await db.ExecuteAsync("""
+            await db.ExecuteAsync("""
             UPDATE DocumentTemplates
             SET FieldsJson = @fieldsJson,
                 UpdatedAt = datetime('now')
-
             WHERE Id = @templateId
             """,
-            new
-            {
-                fieldsJson,
-                templateId
-            });
-    }
+                new
+                {
+                    fieldsJson,
+                    templateId
+                });
+        });
 }
-
 // ── DocumentRepository ───────────────────────────────────────────────────────
 
-public class DocumentRepository(IConfiguration cfg) : IDocumentRepository
+public class DocumentRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWriterGate) : IDocumentRepository
 {
     private SqliteConnection ConnSqlLite() =>
         new(cfg.GetConnectionString("SqlLite"));
@@ -131,18 +139,18 @@ public class DocumentRepository(IConfiguration cfg) : IDocumentRepository
         using var db = ConnSqlLite();
 
         return await db.QueryAsync<Document>("""
-            SELECT Id,
-                   TemplateId,
-                   OriginalFileName,
-                   FilePath,
-                   Status,
-                   ExtractedJson,
-                   ProcessedAt,
-                   CreatedAt,
-                   ErrorMessage
-            FROM Documents
-            ORDER BY CreatedAt DESC
-            """);
+        SELECT Id,
+               TemplateId,
+               OriginalFileName,
+               FilePath,
+               Status,
+               ExtractedJson,
+               ProcessedAt,
+               CreatedAt,
+               ErrorMessage
+        FROM Documents
+        ORDER BY CreatedAt DESC
+        """);
     }
 
     public async Task<Document?> GetByIdAsync(int id)
@@ -150,80 +158,83 @@ public class DocumentRepository(IConfiguration cfg) : IDocumentRepository
         using var db = ConnSqlLite();
 
         return await db.QueryFirstOrDefaultAsync<Document>("""
-            SELECT Id,
-                   TemplateId,
-                   OriginalFileName,
-                   FilePath,
-                   Status,
-                   ExtractedJson,
-                   ProcessedAt,
-                   CreatedAt,
-                   ErrorMessage
-            FROM Documents
-            WHERE Id = @id
-            """,
+        SELECT Id,
+               TemplateId,
+               OriginalFileName,
+               FilePath,
+               Status,
+               ExtractedJson,
+               ProcessedAt,
+               CreatedAt,
+               ErrorMessage
+        FROM Documents
+        WHERE Id = @id
+        """,
             new { id });
     }
 
-    public async Task<int> CreateAsync(Document doc)
-    {
-        using var db = ConnSqlLite();
+    public Task<int> CreateAsync(Document doc) =>
+        sqlLiteWriterGate.WriteAsync(async () =>
+        {
+            using var db = ConnSqlLite();
 
-        return await db.ExecuteScalarAsync<int>("""
+            return await db.ExecuteScalarAsync<int>("""
             INSERT INTO Documents
                 (TemplateId, OriginalFileName, FilePath, Status)            
             VALUES
                 (@TemplateId, @OriginalFileName, @FilePath, @Status)
             RETURNING Id
             """,
-            new
-            {
-                doc.TemplateId,
-                doc.OriginalFileName,
-                doc.FilePath,
-                doc.Status
-            });
-    }
+                new
+                {
+                    doc.TemplateId,
+                    doc.OriginalFileName,
+                    doc.FilePath,
+                    doc.Status
+                });
+        });
 
-    public async Task UpdateStatusAsync(
+    public Task UpdateStatusAsync(
         int id,
         string status,
-        string? error = null)
-    {
-        using var db = ConnSqlLite();
+        string? error = null) =>
+        sqlLiteWriterGate.WriteAsync<Document>(async () =>
+        {
+            using var db = ConnSqlLite();
 
-        await db.ExecuteAsync("""
+            await db.ExecuteAsync("""
             UPDATE Documents
             SET Status = @status,
                 ErrorMessage = @error
             WHERE Id = @id
             """,
-            new
-            {
-                status,
-                error,
-                id
-            });
-    }
+                new
+                {
+                    status,
+                    error,
+                    id
+                });
+        });
 
     // Extrahierte Werte als JSON speichern + Status auf Processed setzen
-    public async Task SaveExtractedAsync(
+    public Task SaveExtractedAsync(
         int id,
-        string extractedJson)
-    {
-        using var db = ConnSqlLite();
+        string extractedJson) =>
+        sqlLiteWriterGate.WriteAsync<Document>(async () =>
+        {
+            using var db = ConnSqlLite();
 
-        await db.ExecuteAsync("""
+            await db.ExecuteAsync("""
             UPDATE Documents
             SET ExtractedJson = @extractedJson,
                 Status = 'Processed',
                 ProcessedAt = datetime('now')
             WHERE Id = @id
             """,
-            new
-            {
-                extractedJson,
-                id
-            });
-    }
+                new
+                {
+                    extractedJson,
+                    id
+                });
+        });
 }

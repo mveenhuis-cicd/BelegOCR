@@ -17,6 +17,7 @@ namespace BelegOCR.Services
             public Task<int> CreateAsync(Document doc)
             {
                 return _documentRepository.CreateAsync(doc);
+
             }
 
             public Task<IEnumerable<Document>> GetAllAsync()
