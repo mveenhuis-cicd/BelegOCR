@@ -20,9 +20,9 @@ jobs:
       uses: ccorsi/setup-sqlite@v1
     - name: Create Database
       run: |
-          sqlite3: belegocr.db < Data/SqlLite/database.schema.sql
+          sqlite3: belegocr.db < Data/SqlLite/schema.sql
           sqlite3 belegocr.db < Data/SqlLite/seed_techsolutions_template.sql
-          sqlite3: belegocr.db < Data/SqlLite/database.seed.sql
+          sqlite3: belegocr.db < Data/SqlLite/seed.sql
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
