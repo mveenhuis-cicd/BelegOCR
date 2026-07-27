@@ -20,6 +20,19 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
+      - name: Download SQLite artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: belegocr-database
+          path: Data
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Verify SQLite database
+        run: |
+          test -f Data/belegocr.db
+          ls -la Data/belegocr.db
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
