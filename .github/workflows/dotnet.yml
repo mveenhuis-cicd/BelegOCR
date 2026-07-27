@@ -18,7 +18,7 @@ jobs:
     - uses: actions/checkout@v4
     - name: Setup SQLite
       uses: ccorsi/setup-sqlite@v1
-    - name: Create Database: 
+    - name: Create Database
       run: |
           sqlite3: belegocr.db < Data/SqlLite/database.schema.sql
           sqlite3 belegocr.db < Data/SqlLite/seed_techsolutions_template.sql
