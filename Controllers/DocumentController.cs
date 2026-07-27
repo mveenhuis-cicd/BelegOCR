@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using BelegOCR.Models;
 
 using System.Text.Json;
+using BelegOCR.Services.Interfaces;
 
 
 namespace BelegOCR.Controllers;
