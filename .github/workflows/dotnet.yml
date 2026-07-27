@@ -21,8 +21,8 @@ jobs:
     - name: Create Database
       run: |
           sqlite3: belegocr.db < Data/SqlLite/schema.sql
-          sqlite3 belegocr.db < Data/SqlLite/seed_techsolutions_template.sql
-          sqlite3: belegocr.db < Data/SqlLite/seed.sql
+          sqlite3: belegocr.db < Data/SqlLite/seed_techsolutions_template.sql
+          sqlite3: belegocr.db < Data/SqlLite/migration_add_anchors.sql
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
