@@ -46,4 +46,4 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ghcr.io/mveenhuis-cicd/belegocr:dev
+          tags: ghcr.io/mveenhuis-cicd/belegocr:Dev
