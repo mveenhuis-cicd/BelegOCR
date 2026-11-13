@@ -26,6 +26,12 @@ public interface IOcrService
     /// </summary>
     Task<(int X, int Y)?> FindAnchorAsync(string imagePath, AnchorPointDef anchor);
 
+    /// <summary>
+    /// Liest alle Wörter eines Bereichs inkl. Bounding-Box (Bildkoordinaten) und
+    /// Konfidenz. Grundlage für Header-Analyse und Tabellenerkennung.
+    /// </summary>
+    Task<List<OcrWord>> ReadWordsAsync(string imagePath, int x, int y, int w, int h);
+
     /// <summary>Erstellt ein annotiertes Bild mit eingezeichneten Feldern (für Vergleichsansicht).</summary>
     Task<string> CreateAnnotatedImageAsync(string imagePath, List<TemplateFieldDef> fields,
         Dictionary<string, object> extractedValues, string outputDir);

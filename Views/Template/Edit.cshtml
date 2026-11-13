@@ -10,6 +10,7 @@
         <div class="mode-switch">
             <button id="modeFields"  class="btn btn-sm btn-mode active">📋 Werte-Felder</button>
             <button id="modeAnchors" class="btn btn-sm btn-mode">⚓ Ankerpunkte</button>
+            <button id="modeTable"   class="btn btn-sm btn-mode">▦ Tabelle</button>
         </div>
         <p class="hint" id="modeHint">
             Ziehe ein Rechteck über den gewünschten Bereich. Danach öffnet sich ein Dialog zur Benennung.
@@ -43,6 +44,16 @@
                 <strong>↘ Unten-Rechts</strong>
                 <div class="anchor-slot-content">Noch nicht markiert</div>
             </div>
+        </div>
+        <div id="tableView" style="display:none">
+            <h4>Tabellen</h4>
+            <p class="text-muted" style="font-size:12px">
+                Ziehe ein Rechteck nur über die <strong>Kopfzeile</strong> der Tabelle.
+                Die Spalten werden per OCR erkannt (Grenze = Mitte der Lücke zwischen
+                zwei Überschriften) und können danach korrigiert werden. Die Zeilen
+                werden pro Beleg automatisch erkannt.
+            </p>
+            <ul id="tableList" class="field-list"></ul>
         </div>
 
         <hr/>
@@ -118,6 +129,60 @@
     </div>
 </div>
 
+<!-- Tabellen-Dialog -->
+<div id="tableDialog" class="modal-overlay" style="display:none">
+    <div class="modal-box modal-wide">
+        <h4>Tabelle definieren</h4>
+        <div style="display:flex; gap:8px">
+            <div class="form-group" style="flex:1">
+                <label>Anzeigename</label>
+                <input id="dlgTableName" class="form-control" placeholder="z.B. Positionen"/>
+            </div>
+            <div class="form-group" style="flex:1">
+                <label>Schlüssel (für Datenbank)</label>
+                <input id="dlgTableKey" class="form-control" placeholder="z.B. positions"/>
+            </div>
+        </div>
+
+        <h5 class="mt-2">Spalten</h5>
+        <small class="text-muted">
+            Schlüsselspalten sind ODER-verknüpft: Ist eine davon gefüllt und erfüllt ihr Regex,
+            beginnt eine neue Position. Sonst wird die Zeile an die vorherige Position angehängt
+            bzw. über das Layout (gelernte Abstände, Einrückung, Textmerkmale) entschieden.
+        </small>
+        <table class="table table-sm table-columns">
+            <thead>
+                <tr><th>Überschrift</th><th>X von</th><th>X bis</th><th>Ziel-Feld</th><th>Regex</th><th title="Schlüsselspalte">🔑</th><th></th></tr>
+            </thead>
+            <tbody id="dlgTableColumns"></tbody>
+        </table>
+        <button id="dlgAddColumn" class="btn btn-sm btn-secondary">+ Spalte</button>
+
+        <div class="form-group mt-2">
+            <label>Tabellenrumpf</label>
+            <div style="display:flex; gap:8px; align-items:center">
+                <span id="dlgBodyInfo" class="text-muted" style="font-size:13px"></span>
+                <button id="dlgPickBody"  class="btn btn-sm btn-secondary">Rumpf markieren</button>
+                <button id="dlgClearBody" class="btn btn-sm btn-secondary">Bis Stoppwort</button>
+            </div>
+        </div>
+        <div class="form-group mt-2">
+            <label>Stoppwörter (Komma-getrennt)</label>
+            <input id="dlgStopWords" class="form-control" placeholder="Summe, Gesamt"/>
+            <small class="text-muted">Eine Zeile, die mit einem dieser Wörter beginnt, beendet den Rumpf.</small>
+        </div>
+        <div class="form-group mt-2">
+            <label>Feld mit Gesamtbetrag (Summenprüfung, optional)</label>
+            <select id="dlgTotalField" class="form-control"></select>
+        </div>
+
+        <div class="mt-3" style="display:flex; gap:8px">
+            <button id="dlgTableOk"     class="btn btn-primary">Übernehmen</button>
+            <button id="dlgTableCancel" class="btn btn-secondary">Abbrechen</button>
+        </div>
+    </div>
+</div>
+
 
 @section Scripts {
 <script>
@@ -127,6 +192,7 @@ const IMG_W        = @Model.ImageWidth;
 const IMG_H        = @Model.ImageHeight;
 let   existingFields = @Html.Raw(Model.Template.FieldsJson);   // bereits gespeicherte Felder
 let   anchors         = @Html.Raw(Model.Template.AnchorsJson);  // { TopLeft, BottomRight }
+debugger;
 
 // ── Modus: "fields" oder "anchors" ───────────────────────────────────────────
 let mode = 'fields';
@@ -134,24 +200,33 @@ let pendingAnchorRole = null; // 'TopLeft' | 'BottomRight' während Anker gerade
 
 const modeFieldsBtn  = document.getElementById('modeFields');
 const modeAnchorsBtn = document.getElementById('modeAnchors');
+const modeTableBtn   = document.getElementById('modeTable');
 const fieldsView     = document.getElementById('fieldsView');
 const anchorsView    = document.getElementById('anchorsView');
+const tableView      = document.getElementById('tableView');
 const modeHint       = document.getElementById('modeHint');
+
+const MODE_HINTS = {
+    fields:  'Ziehe ein Rechteck über den gewünschten Bereich. Danach öffnet sich ein Dialog zur Benennung.',
+    anchors: 'Ziehe ein Rechteck über einen festen Text oben-links, dann einen weiteren unten-rechts im Beleg.',
+    table:   'Ziehe ein Rechteck über die Kopfzeile der Tabelle (nur die Spaltenüberschriften).'
+};
 
 function setMode(newMode) {
     mode = newMode;
     modeFieldsBtn.classList.toggle('active', mode === 'fields');
     modeAnchorsBtn.classList.toggle('active', mode === 'anchors');
+    modeTableBtn.classList.toggle('active', mode === 'table');
     fieldsView.style.display  = mode === 'fields'  ? 'block' : 'none';
     anchorsView.style.display = mode === 'anchors' ? 'block' : 'none';
-    modeHint.textContent = mode === 'fields'
-        ? 'Ziehe ein Rechteck über den gewünschten Bereich. Danach öffnet sich ein Dialog zur Benennung.'
-        : 'Ziehe ein Rechteck über einen festen Text oben-links, dann einen weiteren unten-rechts im Beleg.';
+    tableView.style.display   = mode === 'table'   ? 'block' : 'none';
+    modeHint.textContent = MODE_HINTS[mode];
     redraw();
 }
 
 modeFieldsBtn.addEventListener('click', () => setMode('fields'));
 modeAnchorsBtn.addEventListener('click', () => setMode('anchors'));
+modeTableBtn.addEventListener('click', () => setMode('table'));
 
 document.getElementById('patternExamplesToggle').addEventListener('click', (e) => {
     e.preventDefault();
@@ -175,6 +250,7 @@ function resizeCanvas() {
 let scaleX = 1, scaleY = 1;
 img.onload = resizeCanvas;
 window.addEventListener('resize', resizeCanvas);
+debugger;
 if (img.complete) resizeCanvas();
 
 // ── Zeichnen ─────────────────────────────────────────────────────────────────
@@ -183,15 +259,65 @@ function redraw() {
 
     if (mode === 'fields') {
         existingFields.forEach((f, i) => drawField(f, i));
+    } else if (mode === 'table') {
+        existingFields.forEach((f, i) => {
+            if (f.Type === 'Table' && !(tableDraft && tableDraft.index === i)) drawTable(f, '#c75b00');
+        });
+        if (tableDraft) drawTable(tableDraft.field, '#e08a00');
     } else {
         if (anchors.TopLeft)     drawAnchor(anchors.TopLeft,     '↖ Oben-Links');
         if (anchors.BottomRight) drawAnchor(anchors.BottomRight, '↘ Unten-Rechts');
     }
 
     if (drawing && rect.w && rect.h) {
-        const color = mode === 'fields' ? '#0078d4' : '#8764b8';
-        drawRect(rect, color, mode === 'fields' ? 'rgba(0,120,212,0.15)' : 'rgba(135,100,184,0.15)');
+        const color = { fields: '#0078d4', anchors: '#8764b8', table: '#e08a00' }[mode];
+        const fill  = { fields: 'rgba(0,120,212,0.15)', anchors: 'rgba(135,100,184,0.15)', table: 'rgba(224,138,0,0.15)' }[mode];
+        drawRect(rect, color, fill);
     }
+}
+
+// Header-Frame, Spaltengrenzen und Rumpf einer Tabelle einzeichnen.
+function drawTable(f, color) {
+    const t = f.Table || { Columns: [] };
+    const hx = f.X * scaleX, hy = f.Y * scaleY, hw = f.W * scaleX, hh = f.H * scaleY;
+
+    ctx.fillStyle = 'rgba(224,138,0,0.15)';
+    ctx.fillRect(hx, hy, hw, hh);
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 2;
+    ctx.strokeRect(hx, hy, hw, hh);
+
+    const bodyTop    = (t.HeaderTextBottom + (t.BodyOffsetY || 0)) * scaleY;
+    const bodyBottom = t.BodyHeight > 0 ? bodyTop + t.BodyHeight * scaleY : canvas.height;
+    const left  = Math.min(...t.Columns.map(c => c.X1), f.X) * scaleX;
+    const right = Math.max(...t.Columns.map(c => c.X2), f.X + f.W) * scaleX;
+
+    ctx.setLineDash(t.BodyHeight > 0 ? [] : [6, 4]);
+    ctx.strokeRect(left, bodyTop, right - left, bodyBottom - bodyTop);
+    ctx.setLineDash([]);
+
+    ctx.lineWidth = 1;
+    t.Columns.forEach(c => {
+        ctx.beginPath();
+        ctx.moveTo(c.X1 * scaleX, hy);
+        ctx.lineTo(c.X1 * scaleX, bodyBottom);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.font = 'bold 11px sans-serif';
+        const label = (c.IsKey ? '🔑 ' : '') + (c.Target || c.HeaderText || '–');
+        ctx.fillText(label, c.X1 * scaleX + 3, bodyTop + 12);
+    });
+    if (t.Columns.length) {
+        const lastX = Math.max(...t.Columns.map(c => c.X2)) * scaleX;
+        ctx.beginPath();
+        ctx.moveTo(lastX, hy);
+        ctx.lineTo(lastX, bodyBottom);
+        ctx.stroke();
+    }
+
+    ctx.fillStyle = color;
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('▦ ' + (f.FieldName || 'Tabelle'), hx + 3, hy - 4);
 }
 
 function drawAnchor(a, label) {
@@ -239,7 +365,7 @@ function drawRect(r, stroke, fill) {
     ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.strokeRect(r.x, r.y, r.w, r.h);
 }
-
+debugger;
 // ── Maus-Interaktion ─────────────────────────────────────────────────────────
 let drawing = false, startX = 0, startY = 0;
 let rect    = { x:0, y:0, w:0, h:0 };
@@ -286,6 +412,9 @@ canvas.addEventListener('mouseup', e => {
 
     if (mode === 'fields') {
         openDialog();
+    } else if (mode === 'table') {
+        if (pickingBody) finishBodyPick();
+        else detectTableHeader();
     } else {
         openAnchorDialog();
     }
@@ -311,6 +440,7 @@ document.getElementById('dlgOk').addEventListener('click', () => {
                         .replace(/\s+/g, '_').toLowerCase();
     const type    = document.getElementById('dlgFieldType').value;
     const pattern = document.getElementById('dlgValidationPattern').value.trim();
+    debugger;
 
     if (!name || !key) { alert('Bitte Name und Schlüssel eingeben.'); return; }
 
@@ -338,6 +468,7 @@ document.getElementById('dlgOk').addEventListener('click', () => {
 
 document.getElementById('dlgCancel').addEventListener('click', () => {
     dialog.style.display = 'none';
+debugger;
     redraw();
 });
 
@@ -416,7 +547,209 @@ function renderList() {
             ${f.ValidationPattern ? `<small class="pattern-tag" title="Validierungsmuster">🔍 ${escapeHtml(f.ValidationPattern)}</small>` : ''}
             <button onclick="removeField(${i})" class="btn-icon">×</button>
         </li>`).join('');
+    renderTableList();
 }
+
+function renderTableList() {
+    const ul = document.getElementById('tableList');
+    const items = existingFields
+        .map((f, i) => ({ f, i }))
+        .filter(x => x.f.Type === 'Table')
+        .map(({ f, i }) => `
+        <li class="field-item">
+            <span class="field-badge">Table</span>
+            <strong>${escapeHtml(f.FieldName)}</strong>
+            <code>${escapeHtml(f.FieldKey)}</code>
+            <small>${(f.Table?.Columns || []).length} Spalten</small>
+            <button onclick="openTableDialog(${i})" class="btn-icon" title="Bearbeiten">✎</button>
+            <button onclick="removeField(${i})" class="btn-icon">×</button>
+        </li>`);
+    ul.innerHTML = items.length ? items.join('') : '<li class="text-muted" style="font-size:13px">Noch keine Tabelle definiert.</li>';
+}
+
+// ── Tabellen ─────────────────────────────────────────────────────────────────
+const TABLE_TARGETS = [
+    ['',            '– nicht übernehmen –'],
+    ['PosNo',       'Pos.-Nr.'],
+    ['Description', 'Beschreibung'],
+    ['Quantity',    'Menge'],
+    ['UnitPrice',   'Einzelpreis'],
+    ['Total',       'Gesamt']
+];
+
+const tableDialog = document.getElementById('tableDialog');
+let tableDraft  = null;   // { index: -1 | Index in existingFields, field: {...} }
+let pickingBody = false;
+
+async function detectTableHeader() {
+    const r = pendingRect;
+    modeHint.textContent = 'Kopfzeile wird per OCR gelesen …';
+    let def;
+    try {
+        const res = await fetch('/Template/DetectTableHeader', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ templateId: TEMPLATE_ID, x: r.x, y: r.y, w: r.w, h: r.h })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        def = await res.json();
+    } catch (ex) {
+        alert('Kopfzeile konnte nicht gelesen werden:\n' + ex.message);
+        modeHint.textContent = MODE_HINTS.table;
+        redraw();
+        return;
+    }
+    modeHint.textContent = MODE_HINTS.table;
+
+    if (!def.Columns.length)
+        alert('In der markierten Kopfzeile wurde kein Text erkannt. Spalten bitte manuell anlegen.');
+
+    tableDraft = {
+        index: -1,
+        field: { FieldName: '', FieldKey: '', Type: 'Table', ValidationPattern: null,
+                 X: r.x, Y: r.y, W: r.w, H: r.h, Table: def }
+    };
+    showTableDialog();
+}
+
+function openTableDialog(index) {
+    tableDraft = { index, field: JSON.parse(JSON.stringify(existingFields[index])) };
+    tableDraft.field.Table ??= { Columns: [], StopWords: [], HeaderTextTop: tableDraft.field.Y,
+                                 HeaderTextBottom: tableDraft.field.Y + tableDraft.field.H,
+                                 BodyOffsetY: 0, BodyHeight: 0, TotalFieldKey: null };
+    showTableDialog();
+}
+
+function showTableDialog() {
+    const f = tableDraft.field, t = f.Table;
+    document.getElementById('dlgTableName').value = f.FieldName;
+    document.getElementById('dlgTableKey').value  = f.FieldKey;
+    document.getElementById('dlgStopWords').value = (t.StopWords || []).join(', ');
+
+    const totalSel = document.getElementById('dlgTotalField');
+    totalSel.innerHTML = '<option value="">– keine Summenprüfung –</option>' +
+        existingFields.filter(x => x.Type !== 'Table')
+            .map(x => `<option value="${escapeHtml(x.FieldKey)}">${escapeHtml(x.FieldName)} (${escapeHtml(x.FieldKey)})</option>`)
+            .join('');
+    totalSel.value = t.TotalFieldKey || '';
+
+    renderTableColumns();
+    renderBodyInfo();
+    tableDialog.style.display = 'flex';
+    redraw();
+}
+
+function renderBodyInfo() {
+    const t = tableDraft.field.Table;
+    document.getElementById('dlgBodyInfo').textContent = t.BodyHeight > 0
+        ? `Markiert: ${t.BodyHeight}px hoch, ${t.BodyOffsetY}px unter dem Header`
+        : 'Nicht markiert – Rumpf endet beim ersten Stoppwort (sonst Seitenende)';
+}
+
+function renderTableColumns() {
+    const tbody = document.getElementById('dlgTableColumns');
+    tbody.innerHTML = tableDraft.field.Table.Columns.map((c, i) => `
+        <tr>
+            <td><input class="form-control" data-i="${i}" data-p="HeaderText" value="${escapeHtml(c.HeaderText)}"/></td>
+            <td><input class="form-control col-num" type="number" data-i="${i}" data-p="X1" value="${c.X1}"/></td>
+            <td><input class="form-control col-num" type="number" data-i="${i}" data-p="X2" value="${c.X2}"/></td>
+            <td><select class="form-control" data-i="${i}" data-p="Target">
+                ${TABLE_TARGETS.map(([v, l]) => `<option value="${v}" ${c.Target === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select></td>
+            <td><input class="form-control" data-i="${i}" data-p="ValidationPattern" value="${escapeHtml(c.ValidationPattern || '')}"/></td>
+            <td><input type="checkbox" data-i="${i}" data-p="IsKey" ${c.IsKey ? 'checked' : ''}/></td>
+            <td><button class="btn-icon" onclick="removeTableColumn(${i})">×</button></td>
+        </tr>`).join('');
+
+    tbody.querySelectorAll('[data-p]').forEach(el => el.addEventListener('change', () => {
+        const col = tableDraft.field.Table.Columns[+el.dataset.i];
+        const p   = el.dataset.p;
+        if (p === 'IsKey')               col.IsKey = el.checked;
+        else if (p === 'X1' || p === 'X2') col[p] = parseInt(el.value, 10) || 0;
+        else if (p === 'ValidationPattern') col[p] = el.value.trim() || null;
+        else                              col[p] = el.value;
+        if (p === 'X1') col.TextX1 = col.TextX1 || col.X1;
+        redraw();
+    }));
+}
+
+function removeTableColumn(i) {
+    tableDraft.field.Table.Columns.splice(i, 1);
+    renderTableColumns();
+    redraw();
+}
+
+document.getElementById('dlgAddColumn').addEventListener('click', () => {
+    const f = tableDraft.field, cols = f.Table.Columns;
+    const x1 = cols.length ? Math.max(...cols.map(c => c.X2)) : f.X;
+    cols.push({ HeaderText: '', X1: x1, X2: Math.max(x1 + 50, f.X + f.W), TextX1: x1,
+                Target: '', ValidationPattern: null, IsKey: false });
+    renderTableColumns();
+    redraw();
+});
+
+document.getElementById('dlgPickBody').addEventListener('click', () => {
+    pickingBody = true;
+    tableDialog.style.display = 'none';
+    modeHint.textContent = 'Ziehe ein Rechteck über den Tabellenrumpf (ohne Kopfzeile).';
+});
+
+function finishBodyPick() {
+    const t = tableDraft.field.Table;
+    t.BodyOffsetY = pendingRect.y - t.HeaderTextBottom;
+    t.BodyHeight  = pendingRect.h;
+    pickingBody = false;
+    modeHint.textContent = MODE_HINTS.table;
+    showTableDialog();
+}
+
+document.getElementById('dlgClearBody').addEventListener('click', () => {
+    tableDraft.field.Table.BodyOffsetY = 0;
+    tableDraft.field.Table.BodyHeight  = 0;
+    renderBodyInfo();
+    redraw();
+});
+
+document.getElementById('dlgTableOk').addEventListener('click', () => {
+    const f = tableDraft.field, t = f.Table;
+    f.FieldName = document.getElementById('dlgTableName').value.trim();
+    f.FieldKey  = document.getElementById('dlgTableKey').value.trim().replace(/\s+/g, '_').toLowerCase();
+    t.StopWords = document.getElementById('dlgStopWords').value.split(',').map(s => s.trim()).filter(Boolean);
+    t.TotalFieldKey = document.getElementById('dlgTotalField').value || null;
+
+    if (!f.FieldName || !f.FieldKey) { alert('Bitte Name und Schlüssel eingeben.'); return; }
+    if (!t.Columns.length)           { alert('Bitte mindestens eine Spalte anlegen.'); return; }
+    if (existingFields.some((x, i) => x.FieldKey === f.FieldKey && i !== tableDraft.index)) {
+        alert('Der Schlüssel ist bereits vergeben.'); return;
+    }
+    for (const c of t.Columns) {
+        if (c.X2 <= c.X1) { alert(`Spalte "${c.HeaderText}": "X bis" muss größer als "X von" sein.`); return; }
+        if (c.ValidationPattern) {
+            try { new RegExp(c.ValidationPattern); }
+            catch (ex) { alert(`Spalte "${c.HeaderText}": ungültiger regulärer Ausdruck:\n${ex.message}`); return; }
+        }
+    }
+    if (!t.Columns.some(c => c.IsKey) &&
+        !confirm('Keine Schlüsselspalte gewählt. Positionen werden dann nur über das Layout getrennt (unsicherer). Trotzdem übernehmen?'))
+        return;
+
+    t.Columns.sort((a, b) => a.X1 - b.X1);
+    if (tableDraft.index >= 0) existingFields[tableDraft.index] = f;
+    else                       existingFields.push(f);
+
+    tableDraft = null;
+    tableDialog.style.display = 'none';
+    renderList();
+    redraw();
+});
+
+document.getElementById('dlgTableCancel').addEventListener('click', () => {
+    tableDraft  = null;
+    pickingBody = false;
+    tableDialog.style.display = 'none';
+    modeHint.textContent = MODE_HINTS.table;
+    redraw();
+});
 
 function removeField(i) {
     existingFields.splice(i, 1);

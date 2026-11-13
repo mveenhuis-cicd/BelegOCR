@@ -18,6 +18,7 @@
             <tbody>
             @foreach (var kv in Model.Document.ExtractedValues)
             {
+                if (Model.Document.ExtractedValues.GetTable(kv.Key) != null) continue;
                 var field = Model.Document.ExtractedValues.GetField(kv.Key);
                 <tr>
                     <td><strong>@(field?.FieldName ?? kv.Key)</strong></td>
@@ -27,6 +28,15 @@
             }
             </tbody>
         </table>
+
+        @foreach (var kv in Model.Document.ExtractedValues)
+        {
+            var table = Model.Document.ExtractedValues.GetTable(kv.Key);
+            if (table != null)
+            {
+                <partial name="_ExtractedTable" model="table" />
+            }
+        }
     </div>
 }
 else

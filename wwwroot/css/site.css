@@ -89,6 +89,15 @@ code   { background: #eee; padding: 1px 5px; border-radius: 3px; font-size: 13px
 .modal-box     { background: #fff; border-radius: 10px; padding: 24px; width: 380px;
                  box-shadow: 0 8px 32px rgba(0,0,0,.18); }
 .modal-box h4  { margin-bottom: 12px; }
+.modal-wide    { width: 860px; max-width: 95vw; max-height: 90vh; overflow-y: auto; }
+.table-columns td { padding: 4px; vertical-align: middle; }
+.table-columns .form-control { padding: 4px 6px; font-size: 13px; }
+.table-columns .col-num { width: 80px; }
+
+/* ── Tabellen-Ergebnis ────────────────────────────────── */
+.row-uncertain  td { background: #fff8e1; }
+.row-check-fail td { background: #fdecea; }
+.table-result-meta { font-size: 13px; margin: 6px 0 10px; display: flex; gap: 12px; flex-wrap: wrap; }
 
 /* ── Compare View ─────────────────────────────────────── */
 .compare-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }

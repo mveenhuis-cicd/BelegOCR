@@ -210,8 +210,9 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
     {
         var transform = await ResolveTransformAsync(imagePath, anchors);
         var result = new Dictionary<string, object>();
+        var texts  = new Dictionary<string, string>();   // erkannte Texte für die Summenprüfung der Tabellen
 
-        foreach (var field in fields)
+        foreach (var field in fields.Where(f => f.Type != "Table"))
         {
             try
             {
@@ -222,6 +223,7 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
 
                 var (text, confidence) = await ExtractRegionAsync(imagePath, tx, ty, tw, th);
                 var isValid = ValidateAgainstPattern(text, field.ValidationPattern, field.FieldKey);
+                texts[field.FieldKey] = text;
 
                 result[field.FieldKey] = new
                 {
@@ -247,7 +249,105 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
             }
         }
 
-        return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = false });
+        // Tabellen erst nach den normalen Feldern, damit der Gesamtbetrag für die
+        // Summenprüfung (TableDef.TotalFieldKey) schon erkannt ist.
+        foreach (var field in fields.Where(f => f.Type == "Table"))
+        {
+            try
+            {
+                var total = field.Table?.TotalFieldKey is { } totalKey && texts.TryGetValue(totalKey, out var t) ? t : null;
+                result[field.FieldKey] = await ExtractTableAsync(imagePath, field, transform, total);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Tabelle '{FieldKey}' konnte nicht extrahiert werden", field.FieldKey);
+                result[field.FieldKey] = new ExtractedTable { FieldName = field.FieldName, Warnings = [ex.Message] };
+            }
+        }
+
+        // camelCase wie bei den anonymen Feld-Objekten ("value", "confidence", ...).
+        return JsonSerializer.Serialize(result, new JsonSerializerOptions
+        {
+            WriteIndented        = false,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+    }
+
+    /// <summary>
+    /// Liest den Tabellenbereich einmal per Tesseract auf Wortebene aus und
+    /// überlässt Header-Suche, Zeilen- und Positionserkennung dem TableExtractor.
+    /// </summary>
+    private async Task<ExtractedTable> ExtractTableAsync(
+        string imagePath, TemplateFieldDef field, CoordinateTransform transform, string? expectedTotalText)
+    {
+        var info = SixLabors.ImageSharp.Image.Identify(imagePath);
+        var (x, y, w, h) = TableExtractor.GetSearchRegion(field, transform, info.Width, info.Height);
+
+        var words = await ReadWordsAsync(imagePath, x, y, w, h);
+        var table = TableExtractor.Extract(field, transform, words, info.Height, expectedTotalText);
+
+        logger.LogInformation(
+            "Tabelle '{FieldKey}': {Rows} Positionen, {Uncertain} unsicher, Header {Header}, Summenprüfung {Sum}.",
+            field.FieldKey, table.Rows.Count, table.Rows.Count(r => r.Uncertain),
+            table.HeaderFound ? "gefunden" : "NICHT gefunden",
+            table.SumCheckOk?.ToString() ?? "–");
+
+        return table;
+    }
+
+    public async Task<List<OcrWord>> ReadWordsAsync(string imagePath, int x, int y, int w, int h)
+    {
+        return await Task.Run(() =>
+        {
+            if (!Directory.Exists(_tessDataPath) ||
+                !Directory.EnumerateFiles(_tessDataPath, "*.traineddata").Any())
+                throw new InvalidOperationException(
+                    $"OCR-Sprachdaten nicht gefunden unter '{_tessDataPath}'. " +
+                    "Bitte deu.traineddata in wwwroot/tessdata ablegen.");
+
+            if (!File.Exists(imagePath))
+                throw new FileNotFoundException("Belegbild nicht gefunden.", imagePath);
+
+            var words = new List<OcrWord>();
+
+            using var engine = new TesseractEngine(_tessDataPath, "deu+eng", EngineMode.Default);
+            using var img    = Pix.LoadFromFile(imagePath);
+
+            x = Math.Max(0, x);
+            y = Math.Max(0, y);
+            var clampedW = Math.Min(w, img.Width  - x);
+            var clampedH = Math.Min(h, img.Height - y);
+            if (clampedW <= 0 || clampedH <= 0)
+            {
+                logger.LogWarning("Region ({X},{Y},{W},{H}) liegt außerhalb des Bildes.", x, y, w, h);
+                return words;
+            }
+
+            // SparseText findet auch einzeln stehende Wörter in Tabellenspalten zuverlässig;
+            // die Reihenfolge ist egal, da nur die Bounding-Boxen ausgewertet werden.
+            using var page = engine.Process(img, new Rect(x, y, clampedW, clampedH), PageSegMode.SparseText);
+            using var iter = page.GetIterator();
+
+            iter.Begin();
+            do
+            {
+                var text = iter.GetText(PageIteratorLevel.Word)?.Trim();
+                if (string.IsNullOrEmpty(text)) continue;
+                if (!iter.TryGetBoundingBox(PageIteratorLevel.Word, out var box)) continue;
+
+                words.Add(new OcrWord
+                {
+                    Text       = text,
+                    X1         = box.X1,
+                    Y1         = box.Y1,
+                    X2         = box.X2,
+                    Y2         = box.Y2,
+                    Confidence = iter.GetConfidence(PageIteratorLevel.Word)
+                });
+            } while (iter.Next(PageIteratorLevel.Word));
+
+            return words;
+        });
     }
 
     /// <summary>
@@ -318,6 +418,13 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
             {
                 foreach (var field in fields)
                 {
+                    // Tabellen mit tatsächlich erkannter Lage statt Template-Header-Frame zeichnen
+                    if (field.Type == "Table")
+                    {
+                        DrawTable(ctx, extractedValues.GetTable(field.FieldKey), font);
+                        continue;
+                    }
+
                     var rect  = new RectangleF(field.X, field.Y, field.W, field.H);
                     var color = SixLabors.ImageSharp.Color.FromRgba(0, 120, 215, 80);
                     var border= SixLabors.ImageSharp.Color.FromRgb(0, 120, 215);
@@ -327,6 +434,7 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
                     ctx.Draw(border, 2f, rect);
 
                     // Extrahierten Wert (falls vorhanden) unterhalb des Rahmens einblenden
+
                     var extracted = extractedValues.GetField(field.FieldKey);
                     if (font != null && extracted != null && !string.IsNullOrWhiteSpace(extracted.Value))
                     {
@@ -343,6 +451,35 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
 
             return fileName;
         });
+    }
+
+    /// <summary>
+    /// Zeichnet die erkannten Spaltengrenzen und Positionen ein:
+    /// grün = sicher, orange = unsicher (manuelle Prüfung), rot = Zeilenprüfung fehlgeschlagen.
+    /// </summary>
+    private static void DrawTable(IImageProcessingContext ctx, ExtractedTable? table, Font? font)
+    {
+        if (table == null || table.Columns.Count == 0) return;
+
+        var left   = table.Columns.Min(c => c.X1);
+        var right  = table.Columns.Max(c => c.X2);
+        var top    = table.Rows.Count > 0 ? Math.Min(table.BodyTop, table.Rows.Min(r => r.Y1)) : table.BodyTop;
+        var bottom = table.Rows.Count > 0 ? table.Rows.Max(r => r.Y2) : table.BodyBottom;
+
+        var lineColor = SixLabors.ImageSharp.Color.FromRgb(0, 120, 215);
+        foreach (var x in table.Columns.Select(c => c.X1).Append(right))
+            ctx.DrawLine(lineColor, 1f, new PointF(x, top), new PointF(x, bottom));
+
+        foreach (var row in table.Rows)
+        {
+            var color = row.RowCheckOk == false ? SixLabors.ImageSharp.Color.FromRgb(211, 47, 47)
+                      : row.Uncertain          ? SixLabors.ImageSharp.Color.FromRgb(230, 140, 0)
+                      :                          SixLabors.ImageSharp.Color.FromRgb(0, 168, 107);
+            var rect = new RectangleF(left, row.Y1 - 2, right - left, row.Y2 - row.Y1 + 4);
+            ctx.Draw(color, 2f, rect);
+            if (font != null)
+                ctx.DrawText(row.RowNo.ToString(), font, color, new PointF(Math.Max(0, left - 18), row.Y1));
+        }
     }
 }
 

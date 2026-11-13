@@ -2,6 +2,7 @@ using Dapper;
 using Microsoft.Data.SqlClient;
 using BelegOCR.Models;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 
 namespace BelegOCR.Repositories;
 
@@ -31,6 +32,10 @@ public interface IDocumentRepository
 public class TemplateRepository(IConfiguration cfg) : ITemplateRepository
 {
     private SqlConnection Conn() => new(cfg.GetConnectionString("Default"));
+
+    private Connections.Connections _connections = new Connections.Connections(cfg);
+    
+    private SqliteConnection ConnSqlLite() => _connections.ConnSqlLite;
 
     public async Task<IEnumerable<DocumentTemplate>> GetAllAsync()
     {

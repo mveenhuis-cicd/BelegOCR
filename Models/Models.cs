@@ -71,6 +71,143 @@ public class TemplateFieldDef
     // und das Feld wird im UI deutlich als "unplausibel" markiert statt
     // unbemerkt einen falschen Wert in die Datenbank zu schreiben.
     public string? ValidationPattern { get; set; }
+
+    // Nur bei Type == "Table": Spalten- und Rumpfdefinition. X/Y/W/H des Felds
+    // ist dann der Header-Frame (Kopfzeile der Tabelle), nicht der Wertebereich.
+    public TableDef? Table { get; set; }
+}
+
+/// <summary>
+/// Tabellen-Definition eines Templates. Spalten werden einmalig aus dem
+/// Header-Frame des Musterbelegs per OCR ermittelt (Grenze = Mitte der Lücke
+/// zwischen zwei Spaltenüberschriften) und können im Editor korrigiert werden.
+/// Die Zeilen werden dagegen pro Beleg automatisch erkannt (siehe TableExtractor).
+/// </summary>
+public class TableDef
+{
+    public List<TableColumnDef> Columns { get; set; } = [];
+
+    // Ober-/Unterkante der Header-Texte im Musterbeleg. Dienen als Bezug für den
+    // Rumpf, damit dieser relativ zum im Beleg tatsächlich gefundenen Header liegt.
+    public int HeaderTextTop    { get; set; }
+    public int HeaderTextBottom { get; set; }
+
+    // Rumpf relativ zur Header-Unterkante. BodyHeight = 0 → bis Seitenende,
+    // das Tabellenende ergibt sich dann aus den Stoppwörtern.
+    public int BodyOffsetY { get; set; }
+    public int BodyHeight  { get; set; }
+
+    // Zeile, die mit einem dieser Wörter beginnt, beendet den Tabellenrumpf.
+    public List<string> StopWords { get; set; } =
+        ["Summe", "Gesamt", "Zwischensumme", "Gesamtbetrag", "Nettobetrag", "Übertrag"];
+
+    // Optionaler FieldKey eines normalen Felds mit dem Gesamtbetrag (Summenprüfung).
+    public string? TotalFieldKey { get; set; }
+}
+
+public class TableColumnDef
+{
+    public string  HeaderText        { get; set; } = "";
+    public int     X1                { get; set; }   // Spaltengrenze links
+    public int     X2                { get; set; }   // Spaltengrenze rechts
+    public int     TextX1            { get; set; }   // linke Kante des Header-Texts (für die Header-Suche)
+    public string  Target            { get; set; } = "";   // siehe TableTargets, "" = nicht übernehmen
+    public string? ValidationPattern { get; set; }
+    public bool    IsKey             { get; set; }   // gefüllt + Regex erfüllt → neue Position (ODER-verknüpft)
+}
+
+/// <summary>Ziel-DB-Felder einer Tabellenspalte (Spalten in DocumentPositions).</summary>
+public static class TableTargets
+{
+    public const string PosNo       = "PosNo";
+    public const string Description = "Description";
+    public const string Quantity    = "Quantity";
+    public const string UnitPrice   = "UnitPrice";
+    public const string Total       = "Total";
+}
+
+/// <summary>Ein von Tesseract erkanntes Wort mit Bounding-Box in Bildkoordinaten.</summary>
+public class OcrWord
+{
+    public string Text       { get; set; } = "";
+    public int    X1         { get; set; }
+    public int    Y1         { get; set; }
+    public int    X2         { get; set; }
+    public int    Y2         { get; set; }
+    public float  Confidence { get; set; }
+
+    public int    Height  => Y2 - Y1;
+    public double CenterX => (X1 + X2) / 2.0;
+    public double CenterY => (Y1 + Y2) / 2.0;
+}
+
+/// <summary>Ergebnis der Tabellenerkennung, wird als Objekt in ExtractedJson abgelegt.</summary>
+public class ExtractedTable
+{
+    public string                     Type          { get; set; } = "Table";
+    public string?                    FieldName     { get; set; }
+    public bool                       HeaderFound   { get; set; }
+    public int                        BodyTop       { get; set; }
+    public int                        BodyBottom    { get; set; }
+    public List<ExtractedTableColumn> Columns       { get; set; } = [];
+    public List<ExtractedTableRow>    Rows          { get; set; } = [];
+    public decimal?                   SumOfTotals   { get; set; }
+    public decimal?                   ExpectedTotal { get; set; }
+    public bool?                      SumCheckOk    { get; set; }
+    public TableLayoutStats?          Stats         { get; set; }
+    public List<string>               Warnings      { get; set; } = [];
+}
+
+public class ExtractedTableColumn
+{
+    public string HeaderText { get; set; } = "";
+    public string Target     { get; set; } = "";
+    public int    X1         { get; set; }
+    public int    X2         { get; set; }
+}
+
+public class ExtractedTableRow
+{
+    public int                        RowNo           { get; set; }
+    public string?                    PosNo           { get; set; }
+    public string?                    Description     { get; set; }
+    public decimal?                   Quantity        { get; set; }
+    public decimal?                   UnitPrice       { get; set; }
+    public decimal?                   Total           { get; set; }
+    public Dictionary<string, string> Cells           { get; set; } = [];   // HeaderText → Rohtext
+    public bool                       Uncertain       { get; set; }
+    public string?                    UncertainReason { get; set; }
+    public bool?                      RowCheckOk      { get; set; }   // Menge × Einzelpreis = Gesamt
+    public int                        LineCount       { get; set; }
+    public int                        Y1              { get; set; }
+    public int                        Y2              { get; set; }
+    public double                     Confidence      { get; set; }
+}
+
+/// <summary>Aus den sicheren Positionen gelernte Abstände (relativ zur Schrifthöhe).</summary>
+public class TableLayoutStats
+{
+    public double  LineHeight       { get; set; }
+    public double? PositionGap      { get; set; }
+    public double? LineBreakGap     { get; set; }
+    public bool    FallbackMedian   { get; set; }
+    public int     SureLines        { get; set; }
+    public int     UncertainLines   { get; set; }
+}
+
+/// <summary>Eine Tabellenposition eines Belegs (Tabelle DocumentPositions).</summary>
+public class DocumentPosition
+{
+    public int      Id          { get; set; }
+    public int      DocumentId  { get; set; }
+    public string   FieldKey    { get; set; } = "";
+    public int      RowNo       { get; set; }
+    public string?  PosNo       { get; set; }
+    public string?  Description { get; set; }
+    public decimal? Quantity    { get; set; }
+    public decimal? UnitPrice   { get; set; }
+    public decimal? Total       { get; set; }
+    public bool     Uncertain   { get; set; }
 }
 
 public class Document
@@ -184,6 +321,35 @@ public static class ExtractedValuesExtensions
         }
 
         return raw as ExtractedFieldValue;
+    }
+
+    /// <summary>
+    /// Liest ein Tabellen-Ergebnis (ExtractedTable). Gibt null zurück, wenn der
+    /// Schlüssel fehlt oder kein Tabellenobjekt (erkennbar am "rows"-Array) ist.
+    /// </summary>
+    public static ExtractedTable? GetTable(this Dictionary<string, object> values, string key)
+    {
+        if (!values.TryGetValue(key, out var raw))
+            return null;
+
+        if (raw is ExtractedTable table)
+            return table;
+
+        if (raw is not JsonElement element ||
+            element.ValueKind != JsonValueKind.Object ||
+            !element.EnumerateObject().Any(p => p.Name.Equals("rows", StringComparison.OrdinalIgnoreCase)))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<ExtractedTable>(
+                element.GetRawText(),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }
 

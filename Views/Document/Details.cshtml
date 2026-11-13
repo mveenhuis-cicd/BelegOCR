@@ -30,6 +30,7 @@ else
         <tbody>
         @foreach (var prop in doc.RootElement.EnumerateObject())
         {
+            if (Model.ExtractedValues.GetTable(prop.Name) != null) continue;
             string val  = "", conf = "–";
             if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
             {
@@ -47,6 +48,16 @@ else
         }
         </tbody>
     </table>
+
+    var values = Model.ExtractedValues;
+    foreach (var key in values.Keys)
+    {
+        var table = values.GetTable(key);
+        if (table != null)
+        {
+            <partial name="_ExtractedTable" model="table" />
+        }
+    }
 
     <details>
         <summary>JSON-Rohdaten</summary>

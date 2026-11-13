@@ -149,6 +149,7 @@ public class DocumentController(
 
             var extractedJson = await ocrService.ProcessDocumentAsync(filePath, template.Fields);
             await documentService.SaveExtractedAsync(docId, extractedJson);
+            await SaveTablePositionsAsync(docId, template.Fields, extractedJson);
 
             // TemplateId am Dokument setzen
             var doc = await documentService.GetByIdAsync(docId);
@@ -162,6 +163,29 @@ public class DocumentController(
         {
             logger.LogError(ex, "Fehler beim Verarbeiten von Dokument {Id}", docId);
             await documentService.UpdateStatusAsync(docId, "Error", ex.Message);
+        }
+    }
+
+    // Erkannte Tabellenpositionen zusätzlich relational in DocumentPositions ablegen.
+    private async Task SaveTablePositionsAsync(int docId, List<TemplateFieldDef> fields, string extractedJson)
+    {
+        var values = new Document { ExtractedJson = extractedJson }.ExtractedValues;
+
+        foreach (var field in fields.Where(f => f.Type == "Table"))
+        {
+            var table = values.GetTable(field.FieldKey);
+            if (table == null) continue;
+
+            await documentService.SavePositionsAsync(docId, field.FieldKey, table.Rows.Select(r => new DocumentPosition
+            {
+                RowNo       = r.RowNo,
+                PosNo       = r.PosNo,
+                Description = r.Description,
+                Quantity    = r.Quantity,
+                UnitPrice   = r.UnitPrice,
+                Total       = r.Total,
+                Uncertain   = r.Uncertain || r.RowCheckOk == false
+            }));
         }
     }
 }

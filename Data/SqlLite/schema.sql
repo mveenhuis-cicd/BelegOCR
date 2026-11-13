@@ -47,3 +47,31 @@ CREATE TABLE Documents
     FOREIGN KEY(TemplateId)
         REFERENCES DocumentTemplates(Id)
 );
+
+
+CREATE TABLE DocumentPositions
+(
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    DocumentId INTEGER NOT NULL,
+
+    FieldKey TEXT NOT NULL,
+
+    RowNo INTEGER NOT NULL,
+
+    PosNo TEXT,
+
+    Description TEXT,
+
+    Quantity NUMERIC,
+
+    UnitPrice NUMERIC,
+
+    Total NUMERIC,
+
+    Uncertain INTEGER NOT NULL
+              DEFAULT 0,
+
+    FOREIGN KEY(DocumentId)
+        REFERENCES Documents(Id)
+);

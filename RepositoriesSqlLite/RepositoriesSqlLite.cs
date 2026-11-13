@@ -2,6 +2,7 @@ using BelegOCR.Models;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using System.Xml;
+using Microsoft.Data.SqlClient;
 
 namespace BelegOCR.RepositoriesSqlLite;
 
@@ -24,15 +25,17 @@ public interface IDocumentRepository
     Task<int> CreateAsync(Document doc);
     Task UpdateStatusAsync(int id, string status, string? error = null);
     Task SaveExtractedAsync(int id, string extractedJson);
+    Task SavePositionsAsync(int documentId, string fieldKey, IEnumerable<DocumentPosition> positions);
 }
 
 // ── TemplateRepository ───────────────────────────────────────────────────────
 
 public class TemplateRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWriterGate) : ITemplateRepository
 {
-
-    private SqliteConnection ConnSqlLite() =>
-        new(cfg.GetConnectionString("SqlLite"));
+    private Connections.Connections _connections = new Connections.Connections(cfg);
+    // private SqliteConnection ConnSqlLite() =>
+    //     new(cfg.GetConnectionString("SqlLite"));
+    private SqliteConnection ConnSqlLite() => _connections.ConnSqlLite;
 
     public async Task<IEnumerable<DocumentTemplate>> GetAllAsync()
     {
@@ -46,7 +49,6 @@ public class TemplateRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWri
     public async Task<DocumentTemplate?> GetByIdAsync(int id)
     {
         using var db = ConnSqlLite();
-
         return await db.QueryFirstOrDefaultAsync<DocumentTemplate>(
             "SELECT Id, Name, Description, SampleImagePath, FieldsJson, CreatedAt, UpdatedAt " +
             "FROM DocumentTemplates WHERE Id = @id",
@@ -58,7 +60,6 @@ public class TemplateRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWri
     sqlLiteWriterGate.WriteAsync<int>(async () =>
     {
         using var db = ConnSqlLite();
-
         return await db.ExecuteScalarAsync<int>("""
             INSERT INTO DocumentTemplates
                 (Name, Description, SampleImagePath, FieldsJson)
@@ -236,5 +237,63 @@ public class DocumentRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWri
                     extractedJson,
                     id
                 });
+        });
+
+    // Tabelle wird bei bestehenden Datenbanken (ohne migration_add_document_positions.sql)
+    // beim ersten Zugriff angelegt.
+    private const string EnsurePositionsTable = """
+        CREATE TABLE IF NOT EXISTS DocumentPositions
+        (
+            Id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            DocumentId  INTEGER NOT NULL,
+            FieldKey    TEXT    NOT NULL,
+            RowNo       INTEGER NOT NULL,
+            PosNo       TEXT,
+            Description TEXT,
+            Quantity    NUMERIC,
+            UnitPrice   NUMERIC,
+            Total       NUMERIC,
+            Uncertain   INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(DocumentId) REFERENCES Documents(Id)
+        );
+        """;
+
+    // Positionen einer Tabelle ersetzen (bei erneuter Verarbeitung alte Zeilen verwerfen)
+    public Task SavePositionsAsync(
+        int documentId,
+        string fieldKey,
+        IEnumerable<DocumentPosition> positions) =>
+        sqlLiteWriterGate.WriteAsync<DocumentPosition>(async () =>
+        {
+            using var db = ConnSqlLite();
+            await db.OpenAsync();
+            await db.ExecuteAsync(EnsurePositionsTable);
+
+            using var tx = db.BeginTransaction();
+
+            await db.ExecuteAsync(
+                "DELETE FROM DocumentPositions WHERE DocumentId = @documentId AND FieldKey = @fieldKey",
+                new { documentId, fieldKey }, tx);
+
+            await db.ExecuteAsync("""
+            INSERT INTO DocumentPositions
+                (DocumentId, FieldKey, RowNo, PosNo, Description, Quantity, UnitPrice, Total, Uncertain)
+            VALUES
+                (@DocumentId, @FieldKey, @RowNo, @PosNo, @Description, @Quantity, @UnitPrice, @Total, @Uncertain)
+            """,
+                positions.Select(p => new
+                {
+                    DocumentId = documentId,
+                    FieldKey   = fieldKey,
+                    p.RowNo,
+                    p.PosNo,
+                    p.Description,
+                    p.Quantity,
+                    p.UnitPrice,
+                    p.Total,
+                    p.Uncertain
+                }), tx);
+
+            tx.Commit();
         });
 }

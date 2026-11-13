@@ -16,7 +16,8 @@ namespace BelegOCR.Services
 
             public Task<int> CreateAsync(Document doc)
             {
-                return _documentRepository.CreateAsync(doc);
+                var val = _documentRepository.CreateAsync(doc);
+                 return val;
 
             }
 
@@ -27,7 +28,8 @@ namespace BelegOCR.Services
 
             public Task<Document?> GetByIdAsync(int id)
             {
-                return _documentRepository.GetByIdAsync(id);
+               var doc = _documentRepository.GetByIdAsync(id);
+                return doc;
             }
 
             public Task UpdateStatusAsync(int id, string status, string? error = null)
@@ -38,6 +40,11 @@ namespace BelegOCR.Services
             public Task SaveExtractedAsync(int id, string extractedJson)
             {
                 return _documentRepository.SaveExtractedAsync(id, extractedJson);
+            }
+
+            public Task SavePositionsAsync(int documentId, string fieldKey, IEnumerable<DocumentPosition> positions)
+            {
+                return _documentRepository.SavePositionsAsync(documentId, fieldKey, positions);
             }
         }
     

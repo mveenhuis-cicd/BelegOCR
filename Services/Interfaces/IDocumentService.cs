@@ -9,6 +9,7 @@ namespace BelegOCR.Services.Interfaces
         Task<int> CreateAsync(Document doc);
         Task UpdateStatusAsync(int id, string status, string? error = null);
         Task SaveExtractedAsync(int id, string extractedJson);
+        Task SavePositionsAsync(int documentId, string fieldKey, IEnumerable<DocumentPosition> positions);
     }
     
 }

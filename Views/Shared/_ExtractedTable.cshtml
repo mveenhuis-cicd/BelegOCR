@@ -1,0 +1,85 @@
+@model BelegOCR.Models.ExtractedTable
+@{
+    string Amount(decimal? v) => v?.ToString("N2", System.Globalization.CultureInfo.GetCultureInfo("de-DE")) ?? "";
+    var hasPos  = Model.Columns.Any(c => c.Target == "PosNo");
+    var extra   = Model.Columns.Where(c => string.IsNullOrEmpty(c.Target)).Select(c => c.HeaderText).ToList();
+}
+
+<h5 class="mt-3">▦ @Model.FieldName</h5>
+
+<div class="table-result-meta">
+    <span>@Model.Rows.Count Positionen</span>
+    @if (Model.Rows.Any(r => r.Uncertain))
+    {
+        <span class="badge badge-warning">@Model.Rows.Count(r => r.Uncertain) zur manuellen Prüfung</span>
+    }
+    @if (Model.Rows.Any(r => r.RowCheckOk == false))
+    {
+        <span class="badge badge-danger">@Model.Rows.Count(r => r.RowCheckOk == false) × Menge·Preis ≠ Gesamt</span>
+    }
+    @if (Model.SumCheckOk == true)
+    {
+        <span class="badge badge-success">Summe @Amount(Model.SumOfTotals) = Gesamtbetrag</span>
+    }
+    else if (Model.SumCheckOk == false)
+    {
+        <span class="badge badge-danger">Summe @Amount(Model.SumOfTotals) ≠ Gesamtbetrag @Amount(Model.ExpectedTotal)</span>
+    }
+    else if (Model.SumOfTotals != null)
+    {
+        <span>Summe @Amount(Model.SumOfTotals)</span>
+    }
+    @if (Model.Stats != null)
+    {
+        <span class="text-muted" title="Abstände relativ zur Schrifthöhe, gelernt aus den sicheren Positionen">
+            Zeilenhöhe @Model.Stats.LineHeight px ·
+            Positionsabstand @(Model.Stats.PositionGap?.ToString("F2") ?? "–") ·
+            Umbruchabstand @(Model.Stats.LineBreakGap?.ToString("F2") ?? "–")
+            @(Model.Stats.FallbackMedian ? "(Fallback: Median)" : "")
+        </span>
+    }
+</div>
+
+@foreach (var w in Model.Warnings)
+{
+    <div class="alert alert-warning mb-1">@w</div>
+}
+
+@if (Model.Rows.Count > 0)
+{
+    <table class="table table-sm">
+        <thead>
+            <tr>
+                <th>#</th>
+                @if (hasPos) { <th>Pos.</th> }
+                <th>Beschreibung</th>
+                <th style="text-align:right">Menge</th>
+                <th style="text-align:right">Einzelpreis</th>
+                <th style="text-align:right">Gesamt</th>
+                @foreach (var h in extra) { <th>@h</th> }
+                <th>Konfidenz</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var r in Model.Rows)
+        {
+            var css = r.RowCheckOk == false ? "row-check-fail" : r.Uncertain ? "row-uncertain" : "";
+            <tr class="@css">
+                <td>@r.RowNo</td>
+                @if (hasPos) { <td>@r.PosNo</td> }
+                <td>@r.Description</td>
+                <td style="text-align:right">@r.Quantity?.ToString("0.###", System.Globalization.CultureInfo.GetCultureInfo("de-DE"))</td>
+                <td style="text-align:right">@Amount(r.UnitPrice)</td>
+                <td style="text-align:right">@Amount(r.Total)</td>
+                @foreach (var h in extra) { <td>@(r.Cells.TryGetValue(h, out var v) ? v : "")</td> }
+                <td>@r.Confidence.ToString("F1") %</td>
+                <td>
+                    @if (r.Uncertain) { <span title="@r.UncertainReason">⚠ unsicher</span> }
+                    @if (r.RowCheckOk == false) { <span title="Menge × Einzelpreis ≠ Gesamt">✗ Prüfung</span> }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}

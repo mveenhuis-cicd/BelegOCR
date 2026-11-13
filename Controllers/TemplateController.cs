@@ -1,5 +1,6 @@
 using BelegOCR.Models;
 using BelegOCR.RepositoriesSqlLite;
+using BelegOCR.Services;
 using BelegOCR.Services.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
@@ -9,6 +10,7 @@ namespace BelegOCR.Controllers;
 public class TemplateController(
     IWebHostEnvironment env,
     ITemplateService templateService,
+    IOcrService ocrService,
     ILogger<TemplateController> logger) : Controller
 {
     private string UploadsPath => Path.Combine(env.WebRootPath, "uploads");
@@ -81,6 +83,30 @@ public class TemplateController(
         return Ok(new { success = true, message = "Template gespeichert." });
     }
 
+    // POST /Template/DetectTableHeader  – Header-Frame per OCR in Spalten zerlegen
+    [HttpPost]
+    public async Task<IActionResult> DetectTableHeader([FromBody] DetectTableHeaderRequest req)
+    {
+        var template = await templateService.GetByIdAsync(req.TemplateId);
+        if (template == null) return NotFound();
+        if (req.W <= 0 || req.H <= 0) return BadRequest("Ungültiger Header-Bereich");
+
+        var imgPath = Path.Combine(UploadsPath, template.SampleImagePath);
+        try
+        {
+            var words = await ocrService.ReadWordsAsync(imgPath, req.X, req.Y, req.W, req.H);
+            var def   = TableHeaderAnalyzer.BuildColumns(words, req.X, req.Y, req.W, req.H);
+
+            // PascalCase wie in FieldsJson, damit der Editor das Objekt direkt übernehmen kann.
+            return new JsonResult(def, new JsonSerializerOptions());
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Header-Erkennung für Template {Id} fehlgeschlagen", req.TemplateId);
+            return StatusCode(500, ex.Message);
+        }
+    }
+
     // POST /Template/Delete/5
     [HttpPost, ValidateAntiForgeryToken]
     public async Task<IActionResult> Delete(int id)
@@ -100,6 +126,15 @@ public class TemplateController(
         }
         catch { return (800, 1100); }
     }
+}
+
+public class DetectTableHeaderRequest
+{
+    public int TemplateId { get; set; }
+    public int X { get; set; }
+    public int Y { get; set; }
+    public int W { get; set; }
+    public int H { get; set; }
 }
 
 public class SaveFieldsRequest
