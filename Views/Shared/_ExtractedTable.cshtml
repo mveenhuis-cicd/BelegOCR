@@ -1,8 +1,36 @@
+@using BelegOCR.Models
 @model BelegOCR.Models.ExtractedTable
 @{
-    string Amount(decimal? v) => v?.ToString("N2", System.Globalization.CultureInfo.GetCultureInfo("de-DE")) ?? "";
-    var hasPos  = Model.Columns.Any(c => c.Target == "PosNo");
-    var extra   = Model.Columns.Where(c => string.IsNullOrEmpty(c.Target)).Select(c => c.HeaderText).ToList();
+    var de = System.Globalization.CultureInfo.GetCultureInfo("de-DE");
+    string Amount(decimal? v) => v?.ToString("N2", de) ?? "";
+
+    // Wert einer Zelle passend zum Datentyp formatieren. Konnte der Rohtext nicht
+    // geparst werden (Value null, Cell gefüllt), wird der Rohtext angezeigt und markiert.
+    (string Text, bool ParseFailed) Format(ExtractedTableRow r, ExtractedTableColumn c)
+    {
+        var raw = r.Cells.TryGetValue(c.Key, out var cell) ? cell
+                : r.Cells.TryGetValue(c.HeaderText, out var legacy) ? legacy   // Belege vor der Umstellung
+                : "";
+        switch (c.DataType)
+        {
+            case TableDataTypes.Amount:
+            case TableDataTypes.Number:
+                var d = r.GetDecimal(c.Key);
+                if (d == null) return (raw, !string.IsNullOrWhiteSpace(raw));
+                return (c.DataType == TableDataTypes.Amount ? Amount(d) : d.Value.ToString("0.###", de), false);
+            case TableDataTypes.Date:
+                var iso = r.GetText(c.Key);
+                if (iso == null) return (raw, !string.IsNullOrWhiteSpace(raw));
+                return (DateTime.TryParse(iso, System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.None, out var dt) ? dt.ToString("dd.MM.yyyy", de) : iso, false);
+            default:
+                return (r.GetText(c.Key) ?? raw, false);
+        }
+    }
+
+    bool hasRowCheck = Model.KeyOf(TableRoles.Quantity) != null &&
+                       Model.KeyOf(TableRoles.UnitPrice) != null &&
+                       Model.KeyOf(TableRoles.Total) != null;
 }
 
 <h5 class="mt-3">▦ @Model.FieldName</h5>
@@ -51,12 +79,13 @@
         <thead>
             <tr>
                 <th>#</th>
-                @if (hasPos) { <th>Pos.</th> }
-                <th>Beschreibung</th>
-                <th style="text-align:right">Menge</th>
-                <th style="text-align:right">Einzelpreis</th>
-                <th style="text-align:right">Gesamt</th>
-                @foreach (var h in extra) { <th>@h</th> }
+                @foreach (var c in Model.Columns)
+                {
+                    var align = TableDataTypes.IsNumeric(c.DataType) ? "text-align:right" : "";
+                    <th style="@align" title="@c.Key@(string.IsNullOrEmpty(c.Role) ? "" : " · Rolle " + c.Role)">
+                        @(string.IsNullOrWhiteSpace(c.HeaderText) ? c.Key : c.HeaderText)
+                    </th>
+                }
                 <th>Konfidenz</th>
                 <th></th>
             </tr>
@@ -67,16 +96,23 @@
             var css = r.RowCheckOk == false ? "row-check-fail" : r.Uncertain ? "row-uncertain" : "";
             <tr class="@css">
                 <td>@r.RowNo</td>
-                @if (hasPos) { <td>@r.PosNo</td> }
-                <td>@r.Description</td>
-                <td style="text-align:right">@r.Quantity?.ToString("0.###", System.Globalization.CultureInfo.GetCultureInfo("de-DE"))</td>
-                <td style="text-align:right">@Amount(r.UnitPrice)</td>
-                <td style="text-align:right">@Amount(r.Total)</td>
-                @foreach (var h in extra) { <td>@(r.Cells.TryGetValue(h, out var v) ? v : "")</td> }
+                @foreach (var c in Model.Columns)
+                {
+                    var (text, failed) = Format(r, c);
+                    var align = TableDataTypes.IsNumeric(c.DataType) ? "text-align:right" : "";
+                    if (failed)
+                    {
+                        <td style="@align" class="text-danger" title="Wert konnte nicht als @c.DataType gelesen werden">@text</td>
+                    }
+                    else
+                    {
+                        <td style="@align">@text</td>
+                    }
+                }
                 <td>@r.Confidence.ToString("F1") %</td>
                 <td>
                     @if (r.Uncertain) { <span title="@r.UncertainReason">⚠ unsicher</span> }
-                    @if (r.RowCheckOk == false) { <span title="Menge × Einzelpreis ≠ Gesamt">✗ Prüfung</span> }
+                    @if (hasRowCheck && r.RowCheckOk == false) { <span title="Menge × Einzelpreis ≠ Gesamt">✗ Prüfung</span> }
                 </td>
             </tr>
         }

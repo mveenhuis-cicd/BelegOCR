@@ -75,18 +75,25 @@ public static class TableExtractor
         if (!header.Found)
             result.Warnings.Add("Tabellenkopf nicht gefunden – Template-Position (anker-korrigiert) verwendet.");
 
+        var keys = TableColumnKeys.Resolve(def.Columns);
         var columns = def.Columns
-            .Select(c => new Column(
+            .Select((c, i) => new Column(
                 c,
                 (int)Math.Round(c.X1 * transform.ScaleX + transform.OffsetX + header.Dx),
-                (int)Math.Round(c.X2 * transform.ScaleX + transform.OffsetX + header.Dx)))
+                (int)Math.Round(c.X2 * transform.ScaleX + transform.OffsetX + header.Dx),
+                keys[i],
+                c.ResolveDataType()))
             .OrderBy(c => c.X1)
             .ToList();
 
         result.Columns = columns.Select(c => new ExtractedTableColumn
         {
-            HeaderText = c.Def.HeaderText, Target = c.Def.Target, X1 = c.X1, X2 = c.X2
+            HeaderText = c.Def.HeaderText, Key = c.Key, Role = c.Def.Role, DataType = c.DataType,
+            X1 = c.X1, X2 = c.X2
         }).ToList();
+
+        foreach (var role in columns.Where(c => c.Def.Role != "").GroupBy(c => c.Def.Role).Where(g => g.Count() > 1))
+            result.Warnings.Add($"Rolle \"{role.Key}\" ist mehrfach vergeben – Prüfungen nutzen die erste Spalte.");
 
         // ── 2. Rumpf + physische Zeilen ─────────────────────────────────────
         var bodyTop    = header.Bottom + (int)Math.Round(def.BodyOffsetY * transform.ScaleY);
@@ -222,7 +229,7 @@ public static class TableExtractor
     // Zeilen + Spalten
     // ════════════════════════════════════════════════════════════════════════
 
-    private sealed record Column(TableColumnDef Def, int X1, int X2);
+    private sealed record Column(TableColumnDef Def, int X1, int X2, string Key, string DataType);
 
     private sealed class Line
     {
@@ -312,8 +319,8 @@ public static class TableExtractor
     private static TableLayoutStats ClassifyLines(
         List<Line> lines, List<Column> columns, double lineHeight, List<string> warnings)
     {
-        var descIdx  = columns.FindIndex(c => c.Def.Target == TableTargets.Description);
-        var posNoIdx = columns.FindIndex(c => c.Def.Target == TableTargets.PosNo);
+        var descIdx  = columns.FindIndex(c => c.Def.Role == TableRoles.Description);
+        var posNoIdx = columns.FindIndex(c => c.Def.Role == TableRoles.PosNo);
         var hasKey   = columns.Any(c => c.Def.IsKey);
 
         if (!hasKey)
@@ -522,17 +529,8 @@ public static class TableExtractor
             if (row == null || cells == null) return;
             for (var c = 0; c < columns.Count; c++)
             {
-                var name = UniqueName(row.Cells, columns[c].Def.HeaderText, c);
-                row.Cells[name] = cells[c];
-                var value = cells[c].Trim();
-                switch (columns[c].Def.Target)
-                {
-                    case TableTargets.PosNo:       row.PosNo       = NullIfEmpty(value); break;
-                    case TableTargets.Description: row.Description = NullIfEmpty(value); break;
-                    case TableTargets.Quantity:    row.Quantity    = ParseAmount(value); break;
-                    case TableTargets.UnitPrice:   row.UnitPrice   = ParseAmount(value); break;
-                    case TableTargets.Total:       row.Total       = ParseAmount(value); break;
-                }
+                row.Cells[columns[c].Key]  = cells[c];
+                row.Values[columns[c].Key] = ParseValue(cells[c], columns[c].DataType);
             }
             row.Confidence = confs.Count > 0 ? Math.Round(confs.Average(), 1) : 0;
             rows.Add(row);
@@ -567,13 +565,20 @@ public static class TableExtractor
 
     private static void ApplyChecks(ExtractedTable result, string? expectedTotalText)
     {
+        var qtyKey   = result.KeyOf(TableRoles.Quantity);
+        var priceKey = result.KeyOf(TableRoles.UnitPrice);
+        var totalKey = result.KeyOf(TableRoles.Total);
+
         foreach (var row in result.Rows)
         {
-            if (row.Quantity != null && row.UnitPrice != null && row.Total != null)
-                row.RowCheckOk = Math.Abs(row.Quantity.Value * row.UnitPrice.Value - row.Total.Value) <= (decimal)AmountTolerance;
+            var qty   = row.GetDecimal(qtyKey);
+            var price = row.GetDecimal(priceKey);
+            var total = row.GetDecimal(totalKey);
+            if (qty != null && price != null && total != null)
+                row.RowCheckOk = Math.Abs(qty.Value * price.Value - total.Value) <= (decimal)AmountTolerance;
         }
 
-        var totals = result.Rows.Where(r => r.Total != null).Select(r => r.Total!.Value).ToList();
+        var totals = result.Rows.Select(r => r.GetDecimal(totalKey)).OfType<decimal>().ToList();
         if (totals.Count > 0)
             result.SumOfTotals = totals.Sum();
 
@@ -680,13 +685,35 @@ public static class TableExtractor
     private static string NormalizeText(string text) =>
         Regex.Replace(new string(text.ToLowerInvariant().Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ').ToArray()), @"\s+", " ").Trim();
 
-    private static string UniqueName(Dictionary<string, string> existing, string header, int index)
+    /// <summary>
+    /// Rohtext einer Zelle → Wert passend zum Datentyp der Spalte:
+    /// Text → string, Number/Amount → decimal, Date → "yyyy-MM-dd". Leer oder
+    /// nicht parsebar → null (der Rohtext bleibt in ExtractedTableRow.Cells erhalten).
+    /// </summary>
+    public static object? ParseValue(string? raw, string dataType)
     {
-        var name = string.IsNullOrWhiteSpace(header) ? $"Spalte {index + 1}" : header;
-        return existing.ContainsKey(name) ? $"{name} ({index + 1})" : name;
+        var s = raw?.Trim();
+        if (string.IsNullOrEmpty(s)) return null;
+        return dataType switch
+        {
+            TableDataTypes.Number or TableDataTypes.Amount => ParseAmount(s),
+            TableDataTypes.Date                            => ParseDate(s)?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            _                                              => s
+        };
     }
 
-    private static string? NullIfEmpty(string s) => string.IsNullOrWhiteSpace(s) ? null : s;
+    private static readonly string[] DateFormats =
+        ["d.M.yyyy", "d.M.yy", "yyyy-MM-dd", "d/M/yyyy", "d-M-yyyy"];
+
+    /// <summary>Parst "05.03.2026", "5.3.26", "2026-03-05" (erstes Datum im Text).</summary>
+    public static DateTime? ParseDate(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var m = Regex.Match(text, @"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}");
+        if (!m.Success) return null;
+        return DateTime.TryParseExact(m.Value, DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)
+            ? d : null;
+    }
 
     private static double? Median(IEnumerable<double> values)
     {
@@ -747,18 +774,24 @@ public static class TableHeaderAnalyzer
             var x2 = i == clusters.Count - 1 ? Math.Max(frameX + frameW, c.Max(w => w.X2))
                             : (c.Max(w => w.X2) + clusters[i + 1].Min(w => w.X1)) / 2;
 
-            var (target, isKey, pattern) = GuessTarget(text);
+            var (role, dataType, isKey, pattern) = GuessColumn(text);
             def.Columns.Add(new TableColumnDef
             {
                 HeaderText        = text,
                 X1                = x1,
                 X2                = x2,
                 TextX1            = c.Min(w => w.X1),
-                Target            = target,
+                Role              = role,
+                DataType          = dataType,
                 IsKey             = isKey,
                 ValidationPattern = pattern
             });
         }
+
+        // Schlüssel vorbelegen (im Editor änderbar).
+        var keys = TableColumnKeys.Resolve(def.Columns);
+        for (var i = 0; i < def.Columns.Count; i++)
+            def.Columns[i].Key = keys[i];
 
         return def;
     }
@@ -767,20 +800,24 @@ public static class TableHeaderAnalyzer
     public const string PatternQty    = @"^\d{1,6}([.,]\d{1,3})?(\s*[A-Za-zÄÖÜäöü.]{1,6})?$";
     public const string PatternAmount = @"^-?(€\s*)?\d{1,3}([.,' ]?\d{3})*[.,]\d{2}(\s*(€|EUR|-))?$";
 
-    /// <summary>Vorbelegung von Ziel-Feld, Schlüssel und Regex anhand des Spaltennamens.</summary>
-    public static (string Target, bool IsKey, string? Pattern) GuessTarget(string headerText)
+    /// <summary>Vorbelegung von Rolle, Datentyp, Schlüsselspalte und Regex anhand des Spaltennamens.</summary>
+    public static (string Role, string DataType, bool IsKey, string? Pattern) GuessColumn(string headerText)
     {
+        const string text = TableDataTypes.Text, num = TableDataTypes.Number, amt = TableDataTypes.Amount;
+
         var h = TableExtractor.NormalizeKey(headerText);
-        if (h.StartsWith("artikelnr") || h.StartsWith("artnr"))                  return ("", false, null);
-        if (h.StartsWith("pos") || h is "nr" or "lfdnr")                         return (TableTargets.PosNo, true, PatternPosNo);
-        if (h.StartsWith("meng") || h.StartsWith("anz") || h is "stk" or "qty")  return (TableTargets.Quantity, true, PatternQty);
+        if (h.StartsWith("artikelnr") || h.StartsWith("artnr"))                  return ("", text, false, null);
+        if (h.Contains("datum") || h == "date")                                  return ("", TableDataTypes.Date, false, null);
+        if (h.StartsWith("pos") || h is "nr" or "lfdnr")                         return (TableRoles.PosNo, text, true, PatternPosNo);
+        if (h.StartsWith("meng") || h.StartsWith("anz") || h is "stk" or "qty")  return (TableRoles.Quantity, num, true, PatternQty);
         if (h.StartsWith("einzel") || h.StartsWith("ep") || h.Contains("preisst") || h.Contains("stückpreis") || h == "preis")
-                                                                                 return (TableTargets.UnitPrice, false, PatternAmount);
+                                                                                 return (TableRoles.UnitPrice, amt, false, PatternAmount);
         if (h.StartsWith("gesamt") || h.Contains("betrag") || h.StartsWith("summe") || h.StartsWith("total"))
-                                                                                 return (TableTargets.Total, true, PatternAmount);
+                                                                                 return (TableRoles.Total, amt, true, PatternAmount);
+        if (h.StartsWith("mwst") || h.StartsWith("ust") || h.Contains("rabatt")) return ("", num, false, null);
         if (h.Contains("bezeichnung") || h.Contains("beschreibung") || h.StartsWith("artikel") ||
             h.Contains("leistung") || h.StartsWith("text") || h.StartsWith("produkt"))
-                                                                                 return (TableTargets.Description, false, null);
-        return ("", false, null);
+                                                                                 return (TableRoles.Description, text, false, null);
+        return ("", text, false, null);
     }
 }

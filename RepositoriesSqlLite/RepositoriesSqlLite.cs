@@ -248,15 +248,34 @@ public class DocumentRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWri
             DocumentId  INTEGER NOT NULL,
             FieldKey    TEXT    NOT NULL,
             RowNo       INTEGER NOT NULL,
-            PosNo       TEXT,
-            Description TEXT,
-            Quantity    NUMERIC,
-            UnitPrice   NUMERIC,
-            Total       NUMERIC,
+            ValuesJson  TEXT    NOT NULL DEFAULT '{}',
             Uncertain   INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(DocumentId) REFERENCES Documents(Id)
         );
         """;
+
+    // Bestehende Tabellen aus der Zeit fester Spalten (PosNo, Description, Quantity,
+    // UnitPrice, Total) um ValuesJson ergänzen. Die alten Spalten bleiben ungenutzt
+    // stehen (nullable), damit keine Daten verloren gehen.
+    private static async Task EnsurePositionsSchemaAsync(SqliteConnection db)
+    {
+        await db.ExecuteAsync(EnsurePositionsTable);
+        var columns = (await db.QueryAsync<string>("SELECT name FROM pragma_table_info('DocumentPositions')"))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (columns.Contains("ValuesJson"))
+            return;
+
+        await db.ExecuteAsync("ALTER TABLE DocumentPositions ADD COLUMN ValuesJson TEXT NOT NULL DEFAULT '{}'");
+
+        string[] legacy = ["PosNo", "Description", "Quantity", "UnitPrice", "Total"];
+        if (legacy.All(columns.Contains))
+            await db.ExecuteAsync("""
+            UPDATE DocumentPositions
+            SET ValuesJson = json_object(
+                    'pos_no', PosNo, 'description', Description, 'quantity', Quantity,
+                    'unit_price', UnitPrice, 'total', Total)
+            """);
+    }
 
     // Positionen einer Tabelle ersetzen (bei erneuter Verarbeitung alte Zeilen verwerfen)
     public Task SavePositionsAsync(
@@ -267,7 +286,7 @@ public class DocumentRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWri
         {
             using var db = ConnSqlLite();
             await db.OpenAsync();
-            await db.ExecuteAsync(EnsurePositionsTable);
+            await EnsurePositionsSchemaAsync(db);
 
             using var tx = db.BeginTransaction();
 
@@ -277,20 +296,16 @@ public class DocumentRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWri
 
             await db.ExecuteAsync("""
             INSERT INTO DocumentPositions
-                (DocumentId, FieldKey, RowNo, PosNo, Description, Quantity, UnitPrice, Total, Uncertain)
+                (DocumentId, FieldKey, RowNo, ValuesJson, Uncertain)
             VALUES
-                (@DocumentId, @FieldKey, @RowNo, @PosNo, @Description, @Quantity, @UnitPrice, @Total, @Uncertain)
+                (@DocumentId, @FieldKey, @RowNo, @ValuesJson, @Uncertain)
             """,
                 positions.Select(p => new
                 {
                     DocumentId = documentId,
                     FieldKey   = fieldKey,
                     p.RowNo,
-                    p.PosNo,
-                    p.Description,
-                    p.Quantity,
-                    p.UnitPrice,
-                    p.Total,
+                    p.ValuesJson,
                     p.Uncertain
                 }), tx);
 

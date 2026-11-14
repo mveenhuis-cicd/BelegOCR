@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using BelegOCR.Models;
 using BelegOCR.Services.Interfaces;
@@ -178,13 +179,9 @@ public class DocumentController(
 
             await documentService.SavePositionsAsync(docId, field.FieldKey, table.Rows.Select(r => new DocumentPosition
             {
-                RowNo       = r.RowNo,
-                PosNo       = r.PosNo,
-                Description = r.Description,
-                Quantity    = r.Quantity,
-                UnitPrice   = r.UnitPrice,
-                Total       = r.Total,
-                Uncertain   = r.Uncertain || r.RowCheckOk == false
+                RowNo      = r.RowNo,
+                ValuesJson = JsonSerializer.Serialize(r.Values),
+                Uncertain  = r.Uncertain || r.RowCheckOk == false
             }));
         }
     }

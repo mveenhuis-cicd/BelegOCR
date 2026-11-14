@@ -111,19 +111,117 @@ public class TableColumnDef
     public int     X1                { get; set; }   // Spaltengrenze links
     public int     X2                { get; set; }   // Spaltengrenze rechts
     public int     TextX1            { get; set; }   // linke Kante des Header-Texts (für die Header-Suche)
-    public string  Target            { get; set; } = "";   // siehe TableTargets, "" = nicht übernehmen
+
+    // Frei wählbarer Schlüssel des Werts in der Position, z.B. "article_no".
+    // Leer → aus Rolle bzw. Überschrift abgeleitet (siehe TableColumnKeys.Resolve).
+    public string  Key               { get; set; } = "";
+
+    // Datentyp des Werts, siehe TableDataTypes. Leer → aus der Rolle abgeleitet.
+    public string  DataType          { get; set; } = "";
+
+    // Optionale fachliche Rolle, siehe TableRoles. Nur für Layout-Erkennung und
+    // Prüfungen (Menge × Einzelpreis = Gesamt, Summe, Pos.-Nr.-Folge). "" = keine.
+    public string  Role              { get; set; } = "";
+
     public string? ValidationPattern { get; set; }
     public bool    IsKey             { get; set; }   // gefüllt + Regex erfüllt → neue Position (ODER-verknüpft)
+
+    // Templates vor der Umstellung auf dynamische Spalten speichern "Target" statt "Role".
+    [JsonPropertyName("Target"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyTarget
+    {
+        get => null;
+        set { if (!string.IsNullOrEmpty(value) && string.IsNullOrEmpty(Role)) Role = value; }
+    }
+
+    public string ResolveDataType() => TableDataTypes.Resolve(DataType, Role);
 }
 
-/// <summary>Ziel-DB-Felder einer Tabellenspalte (Spalten in DocumentPositions).</summary>
-public static class TableTargets
+/// <summary>
+/// Optionale fachliche Rollen einer Tabellenspalte. Jede Rolle darf pro Tabelle
+/// höchstens einmal vergeben werden; fehlt eine Rolle, entfällt nur die
+/// zugehörige Prüfung bzw. das Layout-Merkmal.
+/// </summary>
+public static class TableRoles
 {
     public const string PosNo       = "PosNo";
     public const string Description = "Description";
     public const string Quantity    = "Quantity";
     public const string UnitPrice   = "UnitPrice";
     public const string Total       = "Total";
+
+    /// <summary>Standard-Schlüssel, wenn eine Spalte mit Rolle keinen eigenen Key hat.</summary>
+    public static string? DefaultKey(string? role) => role switch
+    {
+        PosNo       => "pos_no",
+        Description => "description",
+        Quantity    => "quantity",
+        UnitPrice   => "unit_price",
+        Total       => "total",
+        _           => null
+    };
+}
+
+/// <summary>Datentypen einer Tabellenspalte – bestimmen, wie der Rohtext geparst wird.</summary>
+public static class TableDataTypes
+{
+    public const string Text   = "Text";     // string
+    public const string Number = "Number";   // decimal (z.B. Menge)
+    public const string Amount = "Amount";   // decimal, Anzeige mit 2 Nachkommastellen
+    public const string Date   = "Date";     // string "yyyy-MM-dd"
+
+    public static string Resolve(string? dataType, string? role) =>
+        !string.IsNullOrWhiteSpace(dataType) ? dataType : role switch
+        {
+            TableRoles.Quantity                      => Number,
+            TableRoles.UnitPrice or TableRoles.Total => Amount,
+            _                                        => Text
+        };
+
+    public static bool IsNumeric(string? dataType) => dataType is Number or Amount;
+}
+
+/// <summary>Ermittelt eindeutige Wert-Schlüssel für die Spalten einer Tabelle.</summary>
+public static class TableColumnKeys
+{
+    /// <summary>
+    /// Key → sonst Standard-Key der Rolle → sonst Slug der Überschrift → sonst "col_N".
+    /// Doppelte Schlüssel erhalten ein Suffix "_2", "_3", ...
+    /// </summary>
+    public static string[] Resolve(IReadOnlyList<TableColumnDef> columns)
+    {
+        var keys = new string[columns.Count];
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < columns.Count; i++)
+        {
+            var c   = columns[i];
+            var key = Slugify(c.Key);
+            if (key.Length == 0) key = TableRoles.DefaultKey(c.Role) ?? "";
+            if (key.Length == 0) key = Slugify(c.HeaderText);
+            if (key.Length == 0) key = $"col_{i + 1}";
+
+            var unique = key;
+            for (var n = 2; !used.Add(unique); n++)
+                unique = $"{key}_{n}";
+            keys[i] = unique;
+        }
+        return keys;
+    }
+
+    /// <summary>"Art.-Nr." → "art_nr", "Größe" → "groesse".</summary>
+    public static string Slugify(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        var s = text.Trim().ToLowerInvariant()
+            .Replace("ä", "ae").Replace("ö", "oe").Replace("ü", "ue").Replace("ß", "ss");
+        var sb = new System.Text.StringBuilder();
+        foreach (var ch in s)
+        {
+            if (ch is >= 'a' and <= 'z' or >= '0' and <= '9') sb.Append(ch);
+            else if (sb.Length > 0 && sb[^1] != '_')          sb.Append('_');
+        }
+        return sb.ToString().Trim('_');
+    }
 }
 
 /// <summary>Ein von Tesseract erkanntes Wort mit Bounding-Box in Bildkoordinaten.</summary>
@@ -156,25 +254,43 @@ public class ExtractedTable
     public bool?                      SumCheckOk    { get; set; }
     public TableLayoutStats?          Stats         { get; set; }
     public List<string>               Warnings      { get; set; } = [];
+
+    /// <summary>Wert-Schlüssel der Spalte mit der angegebenen Rolle, sonst null.</summary>
+    public string? KeyOf(string role) => Columns.FirstOrDefault(c => c.Role == role)?.Key;
 }
 
 public class ExtractedTableColumn
 {
     public string HeaderText { get; set; } = "";
-    public string Target     { get; set; } = "";
+    public string Key        { get; set; } = "";
+    public string Role       { get; set; } = "";
+    public string DataType   { get; set; } = TableDataTypes.Text;
     public int    X1         { get; set; }
     public int    X2         { get; set; }
+
+    // Belege vor der Umstellung auf dynamische Spalten speichern "Target" statt Role/Key.
+    [JsonPropertyName("Target"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LegacyTarget
+    {
+        get => null;
+        set
+        {
+            if (string.IsNullOrEmpty(value) || !string.IsNullOrEmpty(Role)) return;
+            Role     = value;
+            Key      = string.IsNullOrEmpty(Key) ? TableRoles.DefaultKey(value) ?? "" : Key;
+            DataType = TableDataTypes.Resolve(null, value);
+        }
+    }
 }
 
 public class ExtractedTableRow
 {
-    public int                        RowNo           { get; set; }
-    public string?                    PosNo           { get; set; }
-    public string?                    Description     { get; set; }
-    public decimal?                   Quantity        { get; set; }
-    public decimal?                   UnitPrice       { get; set; }
-    public decimal?                   Total           { get; set; }
-    public Dictionary<string, string> Cells           { get; set; } = [];   // HeaderText → Rohtext
+    public int                         RowNo          { get; set; }
+
+    // Spalten-Key → geparster Wert (string | decimal | null; nach dem Deserialisieren
+    // JsonElement). Typsicherer Zugriff über GetText/GetDecimal.
+    public Dictionary<string, object?> Values         { get; set; } = [];
+    public Dictionary<string, string>  Cells          { get; set; } = [];   // Spalten-Key → Rohtext
     public bool                       Uncertain       { get; set; }
     public string?                    UncertainReason { get; set; }
     public bool?                      RowCheckOk      { get; set; }   // Menge × Einzelpreis = Gesamt
@@ -182,6 +298,50 @@ public class ExtractedTableRow
     public int                        Y1              { get; set; }
     public int                        Y2              { get; set; }
     public double                     Confidence      { get; set; }
+
+    public string? GetText(string? key)
+    {
+        if (key == null || !Values.TryGetValue(key, out var v) || v == null) return null;
+        return v switch
+        {
+            JsonElement { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined } => null,
+            JsonElement { ValueKind: JsonValueKind.String } e => e.GetString(),
+            JsonElement e => e.GetRawText(),
+            decimal d     => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            _             => v.ToString()
+        };
+    }
+
+    public decimal? GetDecimal(string? key)
+    {
+        if (key == null || !Values.TryGetValue(key, out var v) || v == null) return null;
+        return v switch
+        {
+            decimal d => d,
+            JsonElement { ValueKind: JsonValueKind.Number } e when e.TryGetDecimal(out var d) => d,
+            JsonElement { ValueKind: JsonValueKind.String } e when decimal.TryParse(
+                e.GetString(), System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out var d) => d,
+            _ => null
+        };
+    }
+
+    // ── Belege vor der Umstellung auf dynamische Spalten (nur Lesen) ────────
+    [JsonPropertyName("PosNo"),       JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string?  LegacyPosNo       { get => null; set => SetLegacy(TableRoles.PosNo, value); }
+    [JsonPropertyName("Description"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string?  LegacyDescription { get => null; set => SetLegacy(TableRoles.Description, value); }
+    [JsonPropertyName("Quantity"),    JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? LegacyQuantity    { get => null; set => SetLegacy(TableRoles.Quantity, value); }
+    [JsonPropertyName("UnitPrice"),   JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? LegacyUnitPrice   { get => null; set => SetLegacy(TableRoles.UnitPrice, value); }
+    [JsonPropertyName("Total"),       JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? LegacyTotal       { get => null; set => SetLegacy(TableRoles.Total, value); }
+
+    private void SetLegacy(string role, object? value)
+    {
+        if (value != null) Values[TableRoles.DefaultKey(role)!] = value;
+    }
 }
 
 /// <summary>Aus den sicheren Positionen gelernte Abstände (relativ zur Schrifthöhe).</summary>
@@ -202,11 +362,7 @@ public class DocumentPosition
     public int      DocumentId  { get; set; }
     public string   FieldKey    { get; set; } = "";
     public int      RowNo       { get; set; }
-    public string?  PosNo       { get; set; }
-    public string?  Description { get; set; }
-    public decimal? Quantity    { get; set; }
-    public decimal? UnitPrice   { get; set; }
-    public decimal? Total       { get; set; }
+    public string   ValuesJson  { get; set; } = "{}";   // Spalten-Key → Wert (dynamische Spalten)
     public bool     Uncertain   { get; set; }
 }
 

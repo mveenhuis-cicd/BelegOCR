@@ -59,15 +59,10 @@ CREATE TABLE DocumentPositions
 
     RowNo INTEGER NOT NULL,
 
-    PosNo TEXT,
-
-    Description TEXT,
-
-    Quantity NUMERIC,
-
-    UnitPrice NUMERIC,
-
-    Total NUMERIC,
+    -- Spalten-Key → Wert, Keys frei pro Template (z.B. {"pos_no":"1","quantity":2,"total":30.0})
+    -- Abfrage z.B.: SELECT json_extract(ValuesJson, '$.total') FROM DocumentPositions
+    ValuesJson TEXT NOT NULL
+               DEFAULT '{}',
 
     Uncertain INTEGER NOT NULL
               DEFAULT 0,
