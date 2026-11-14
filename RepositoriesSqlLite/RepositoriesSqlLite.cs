@@ -15,7 +15,7 @@ public interface ITemplateRepository
     Task<int> CreateAsync(DocumentTemplate t);
     Task UpdateAsync(DocumentTemplate t);
     Task DeleteAsync(int id);
-    Task SaveFieldsAsync(int templateId, string fieldsJson);
+    Task SaveFieldsAsync(int templateId, string fieldsJson, string anchorsJson);
 }
 
 public interface IDocumentRepository
@@ -42,7 +42,7 @@ public class TemplateRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWri
         using var db = ConnSqlLite();
 
         return await db.QueryAsync<DocumentTemplate>(
-            "SELECT Id, Name, Description, SampleImagePath, FieldsJson, CreatedAt, UpdatedAt " +
+            "SELECT Id, Name, Description, SampleImagePath, FieldsJson, AnchorsJson, CreatedAt, UpdatedAt " +
             "FROM DocumentTemplates ORDER BY CreatedAt DESC");
     }
 
@@ -50,7 +50,7 @@ public class TemplateRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWri
     {
         using var db = ConnSqlLite();
         return await db.QueryFirstOrDefaultAsync<DocumentTemplate>(
-            "SELECT Id, Name, Description, SampleImagePath, FieldsJson, CreatedAt, UpdatedAt " +
+            "SELECT Id, Name, Description, SampleImagePath, FieldsJson, AnchorsJson, CreatedAt, UpdatedAt " +
             "FROM DocumentTemplates WHERE Id = @id",
             new { id });
     }
@@ -109,21 +109,23 @@ public class TemplateRepository(IConfiguration cfg, SqlLiteWriterGate sqlLiteWri
              new { id });
      });
 
-    // Nur die JSON-Felder-Spalte aktualisieren (nach Canvas-Bearbeitung)
-    public Task SaveFieldsAsync(int templateId, string fieldsJson) =>
+    // Felder- und Anker-JSON aktualisieren (nach Canvas-Bearbeitung)
+    public Task SaveFieldsAsync(int templateId, string fieldsJson, string anchorsJson) =>
         sqlLiteWriterGate.WriteAsync<DocumentTemplate>(async () =>
         {
             using var db = ConnSqlLite();
 
             await db.ExecuteAsync("""
             UPDATE DocumentTemplates
-            SET FieldsJson = @fieldsJson,
-                UpdatedAt = datetime('now')
+            SET FieldsJson  = @fieldsJson,
+                AnchorsJson = @anchorsJson,
+                UpdatedAt   = datetime('now')
             WHERE Id = @templateId
             """,
                 new
                 {
                     fieldsJson,
+                    anchorsJson,
                     templateId
                 });
         });

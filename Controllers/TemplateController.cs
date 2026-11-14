@@ -1,4 +1,4 @@
-using BelegOCR.Models;
+﻿using BelegOCR.Models;
 using BelegOCR.RepositoriesSqlLite;
 using BelegOCR.Services;
 using BelegOCR.Services.Interfaces;
@@ -77,8 +77,9 @@ public class TemplateController(
     {
         if (req.TemplateId <= 0) return BadRequest("Ungültige Template-ID");
 
-        var json = JsonSerializer.Serialize(req.Fields);
-        await templateService.SaveFieldsAsync(req.TemplateId, json);
+        var json        = JsonSerializer.Serialize(req.Fields);
+        var anchorsJson = JsonSerializer.Serialize(req.Anchors ?? new TemplateAnchors());
+        await templateService.SaveFieldsAsync(req.TemplateId, json, anchorsJson);
 
         return Ok(new { success = true, message = "Template gespeichert." });
     }
@@ -141,5 +142,6 @@ public class SaveFieldsRequest
     {
         public int TemplateId { get; set; }
         public List<TemplateFieldDef> Fields { get; set; } = [];
+        public TemplateAnchors? Anchors { get; set; }
     }
 

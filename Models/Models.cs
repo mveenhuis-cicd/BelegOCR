@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace BelegOCR.Models;
@@ -438,6 +438,13 @@ public class CoordinateTransform
     public double ScaleY  { get; set; } = 1.0;
     public double OffsetX { get; set; } = 0.0;
     public double OffsetY { get; set; } = 0.0;
+
+    /// <summary>
+    /// true, wenn ScaleX und ScaleY deutlich voneinander abweichen. Bei reinem
+    /// Zoom/Neuskalieren müssen beide fast gleich sein – eine große Abweichung
+    /// deutet auf einen falsch zugeordneten Anker-Treffer hin.
+    /// </summary>
+    public bool IsUncertain { get; set; }
 
     /// <summary>Wendet die Transformation auf eine Template-Koordinate an.</summary>
     public (int X, int Y, int W, int H) Apply(int x, int y, int w, int h) => (

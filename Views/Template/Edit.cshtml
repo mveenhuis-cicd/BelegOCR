@@ -493,7 +493,11 @@ document.getElementById('dlgAnchorOk').addEventListener('click', () => {
     const text = document.getElementById('dlgAnchorText').value.trim();
     if (!text) { alert('Bitte den erwarteten Text eingeben.'); return; }
 
-    anchors[pendingAnchorRole] = { ExpectedText: text, ...pendingRect };
+    // PascalCase wie in AnchorsJson, damit drawAnchor/renderAnchorSlot (a.X ...) sofort passen.
+    anchors[pendingAnchorRole] = {
+        ExpectedText: text,
+        X: pendingRect.x, Y: pendingRect.y, W: pendingRect.w, H: pendingRect.h
+    };
     anchorDialog.style.display = 'none';
     renderAnchorPanel();
     redraw();

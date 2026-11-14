@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using BelegOCR.Models;
 using BelegOCR.Services.Interfaces;
@@ -148,7 +148,7 @@ public class DocumentController(
             var template = await templateService.GetByIdAsync(templateId);
             if (template == null) return;
 
-            var extractedJson = await ocrService.ProcessDocumentAsync(filePath, template.Fields);
+            var extractedJson = await ocrService.ProcessDocumentAsync(filePath, template.Fields, template.Anchors);
             await documentService.SaveExtractedAsync(docId, extractedJson);
             await SaveTablePositionsAsync(docId, template.Fields, extractedJson);
 

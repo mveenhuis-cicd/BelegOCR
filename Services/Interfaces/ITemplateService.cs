@@ -9,6 +9,6 @@ namespace BelegOCR.Services.Interfaces
         Task<int> CreateAsync(DocumentTemplate t);
         Task UpdateAsync(DocumentTemplate t);
         Task DeleteAsync(int id);
-        Task SaveFieldsAsync(int templateId, string fieldsJson);
+        Task SaveFieldsAsync(int templateId, string fieldsJson, string anchorsJson);
     }
 }

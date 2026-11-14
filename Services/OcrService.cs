@@ -1,4 +1,4 @@
-using Tesseract;
+﻿using Tesseract;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
 using SixLabors.ImageSharp.Drawing.Processing;
@@ -110,17 +110,17 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
 
     /// <summary>
     /// Sucht den erwarteten Anker-Text in einer Suchbox um die Template-Position.
-    /// Die Suchbox ist deutlich größer als die ursprüngliche Anker-Markierung
-    /// (siehe SearchMargin), damit auch ein verschobener Beleg den Anker noch
-    /// im Suchbereich hat. Nutzt Tesseract's Zeilen-Iterator, um die tatsächliche
-    /// Position der gefundenen Textzeile zu ermitteln statt nur deren Inhalt.
+    /// Die Suchbox wächst mit der Bildgröße (mind. 150 px, sonst 25 % der längeren
+    /// Bildseite), damit auch ein gezoomter Beleg – bei dem Anker am Bildrand um
+    /// (Faktor − 1) × Position wandern – den Anker noch im Suchbereich hat.
+    /// Kommt der Text mehrfach vor (z.B. Firmenname im Logo, im Adressblock und
+    /// in der Absenderzeile), gewinnt der Treffer, der der Template-Position am
+    /// nächsten liegt, statt einfach der erste.
     /// </summary>
     public async Task<(int X, int Y)?> FindAnchorAsync(string imagePath, AnchorPointDef anchor)
     {
         return await Task.Run(() =>
         {
-            const int searchMargin = 150; // px in jede Richtung um die Template-Position
-
             if (!Directory.Exists(_tessDataPath) ||
                 !Directory.EnumerateFiles(_tessDataPath, "*.traineddata").Any())
             {
@@ -139,10 +139,12 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
                 using var engine = new TesseractEngine(_tessDataPath, "deu+eng", EngineMode.Default);
                 using var img    = Pix.LoadFromFile(imagePath);
 
-                var searchX = Math.Max(0, anchor.X - searchMargin);
-                var searchY = Math.Max(0, anchor.Y - searchMargin);
-                var searchW = Math.Min(anchor.W + 2 * searchMargin, img.Width  - searchX);
-                var searchH = Math.Min(anchor.H + 2 * searchMargin, img.Height - searchY);
+                var searchMargin = Math.Max(150, (int)(Math.Max(img.Width, img.Height) * 0.25));
+
+                var searchX = Math.Clamp(anchor.X - searchMargin, 0, img.Width);
+                var searchY = Math.Clamp(anchor.Y - searchMargin, 0, img.Height);
+                var searchW = Math.Min(anchor.X + anchor.W + searchMargin, img.Width)  - searchX;
+                var searchH = Math.Min(anchor.Y + anchor.H + searchMargin, img.Height) - searchY;
 
                 if (searchW <= 0 || searchH <= 0)
                 {
@@ -150,13 +152,15 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
                     return null;
                 }
 
+                var normalizedExpected = NormalizeForComparison(anchor.ExpectedText);
+                if (string.IsNullOrEmpty(normalizedExpected))
+                    return null;
+
                 var searchRect = new Rect(searchX, searchY, searchW, searchH);
                 using var page = engine.Process(img, searchRect, PageSegMode.SparseText);
                 using var iter = page.GetIterator();
 
-                var normalizedExpected = NormalizeForComparison(anchor.ExpectedText);
-                if (string.IsNullOrEmpty(normalizedExpected))
-                    return null;
+                var hits = new List<(int X, int Y, string Line)>();
 
                 iter.Begin();
                 do
@@ -165,27 +169,31 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
                     if (string.IsNullOrWhiteSpace(lineText))
                         continue;
 
-                    var normalizedLine = NormalizeForComparison(lineText);
-
                     // Enthält statt exakter Gleichheit, da Tesseract Zeilenumbrüche
                     // und Nachbartext im SparseText-Modus mit ins Ergebnis ziehen kann.
-                    if (normalizedLine.Contains(normalizedExpected))
-                    {
-                        if (iter.TryGetBoundingBox(PageIteratorLevel.TextLine, out var rect))
-                        {
-                            logger.LogInformation(
-                                "Anker '{Text}' gefunden bei ({X},{Y}) statt Template-Position ({TplX},{TplY}).",
-                                anchor.ExpectedText, rect.X1, rect.Y1, anchor.X, anchor.Y);
-                            return ((int X, int Y)?)(rect.X1, rect.Y1);
-                        }
-                    }
+                    if (NormalizeForComparison(lineText).Contains(normalizedExpected) &&
+                        iter.TryGetBoundingBox(PageIteratorLevel.TextLine, out var rect))
+                        hits.Add((rect.X1, rect.Y1, lineText.Trim()));
                 } while (iter.Next(PageIteratorLevel.TextLine));
 
-                logger.LogWarning(
-                    "Anker-Text '{Text}' nicht im Suchbereich um ({X},{Y}) gefunden – " +
-                    "Koordinaten-Korrektur entfällt für diesen Anker.",
-                    anchor.ExpectedText, anchor.X, anchor.Y);
-                return null;
+                if (hits.Count == 0)
+                {
+                    logger.LogWarning(
+                        "Anker-Text '{Text}' nicht im Suchbereich ({SX},{SY},{SW},{SH}) gefunden – " +
+                        "Koordinaten-Korrektur entfällt.",
+                        anchor.ExpectedText, searchX, searchY, searchW, searchH);
+                    return null;
+                }
+
+                var best = hits.MinBy(h => Math.Pow(h.X - anchor.X, 2) + Math.Pow(h.Y - anchor.Y, 2));
+
+                logger.LogInformation(
+                    "Anker '{Text}': {Count} Treffer [{Hits}], gewählt ({X},{Y}), Template-Position ({TplX},{TplY}).",
+                    anchor.ExpectedText, hits.Count,
+                    string.Join("; ", hits.Select(h => $"({h.X},{h.Y}) \"{h.Line}\"")),
+                    best.X, best.Y, anchor.X, anchor.Y);
+
+                return ((int X, int Y)?)(best.X, best.Y);
             }
             catch (Exception ex)
             {
@@ -365,22 +373,39 @@ public class OcrService(IWebHostEnvironment env, ILogger<OcrService> logger) : I
         var topLeftFound     = await FindAnchorAsync(imagePath, anchors.TopLeft);
         var bottomRightFound = await FindAnchorAsync(imagePath, anchors.BottomRight);
 
+        if (topLeftFound == null && bottomRightFound == null)
+        {
+            logger.LogWarning("Koordinaten-Korrektur übersprungen: keiner der beiden Anker gefunden.");
+            return CoordinateTransform.Identity;
+        }
+
         if (topLeftFound == null || bottomRightFound == null)
         {
+            // Nur ein Anker im Bild (z.B. Beleg beschnitten) -> nur verschieben, nicht skalieren.
+            var (def, found, role) = topLeftFound != null
+                ? (anchors.TopLeft, topLeftFound.Value, "TopLeft")
+                : (anchors.BottomRight, bottomRightFound!.Value, "BottomRight");
+
+            var shift = AnchorTransformCalculator.CalculateOffsetOnly(def, found.X, found.Y);
             logger.LogWarning(
-                "Koordinaten-Korrektur übersprungen: TopLeft {TopLeftFound}, BottomRight {BottomRightFound} gefunden.",
-                topLeftFound != null ? "gefunden" : "NICHT gefunden",
-                bottomRightFound != null ? "gefunden" : "NICHT gefunden");
-            return CoordinateTransform.Identity;
+                "Nur Anker {Role} gefunden – Korrektur nur als Verschiebung ohne Skalierung: OffsetX={OffsetX:F1} OffsetY={OffsetY:F1}",
+                role, shift.OffsetX, shift.OffsetY);
+            return shift;
         }
 
         var transform = AnchorTransformCalculator.Calculate(
             anchors.TopLeft,     topLeftFound.Value.X,     topLeftFound.Value.Y,
             anchors.BottomRight, bottomRightFound.Value.X, bottomRightFound.Value.Y);
 
-        logger.LogInformation(
-            "Koordinaten-Korrektur angewendet: ScaleX={ScaleX:F3} ScaleY={ScaleY:F3} OffsetX={OffsetX:F1} OffsetY={OffsetY:F1}",
-            transform.ScaleX, transform.ScaleY, transform.OffsetX, transform.OffsetY);
+        if (transform.IsUncertain)
+            logger.LogWarning(
+                "Ankerkorrektur unsicher: ScaleX={ScaleX:F3} und ScaleY={ScaleY:F3} weichen deutlich voneinander ab " +
+                "(evtl. falscher Anker-Treffer). OffsetX={OffsetX:F1} OffsetY={OffsetY:F1}",
+                transform.ScaleX, transform.ScaleY, transform.OffsetX, transform.OffsetY);
+        else
+            logger.LogInformation(
+                "Koordinaten-Korrektur angewendet: ScaleX={ScaleX:F3} ScaleY={ScaleY:F3} OffsetX={OffsetX:F1} OffsetY={OffsetY:F1}",
+                transform.ScaleX, transform.ScaleY, transform.OffsetX, transform.OffsetY);
 
         return transform;
     }

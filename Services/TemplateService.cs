@@ -33,9 +33,9 @@ namespace BelegOCR.Services
             return _templateRepository.GetByIdAsync(id);
         }
 
-        public Task SaveFieldsAsync(int templateId, string fieldsJson)
+        public Task SaveFieldsAsync(int templateId, string fieldsJson, string anchorsJson)
         {
-            return _templateRepository.SaveFieldsAsync(templateId, fieldsJson);
+            return _templateRepository.SaveFieldsAsync(templateId, fieldsJson, anchorsJson);
         }
 
         public Task UpdateAsync(DocumentTemplate t)
